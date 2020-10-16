@@ -44,8 +44,8 @@ namespace myrt
 
     const std::string pathtracer_fragment_shader = (std::stringstream() <<
         "#version 460 core\n" <<
-        glsl::bvh_definitions_code("bvh_traverse", "visit_triangle") <<
-        glsl::bvh_definitions_code("bvh_traverse_global", "visit_object_aabb") <<
+        glsl::bvh_definitions_code("bvh_traverse") <<
+        glsl::bvh_definitions_code("bvh_traverse_global") <<
         glsl::intersect_triangle_code() <<
         detail::pathtracer_fragment_shader_base <<
         glsl::bvh_code("bvh_traverse", "visit_triangle", "bvh_nodes", "bvh_indices") <<

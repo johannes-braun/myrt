@@ -88,6 +88,7 @@ int main(int argc, char** argv)
 
         auto [cubemap, cube_sampler] = load_cubemap();
         bool cubemap_enabled = false;
+        int samples_per_iteration = 1;
 
         ImGui::SFML::Init(window, false);
         ImGui::GetIO().Fonts->AddFontFromFileTTF((res_dir / "alata.ttf").string().c_str(), 20);
@@ -99,17 +100,24 @@ int main(int argc, char** argv)
         myrt::pathtracer pathtracer;
 
         sf::Clock delta_time;
+        float time = 0.0;
         while (!close)
         {
             sf::Time delta = delta_time.restart();
+            time += delta.asSeconds();
             ImGui::SFML::Update(window, delta);
 
-            for (auto const& obj : objects)
+            for (auto& obj : objects)
+            {
+                obj.transformation = obj.transformation * glm::rotate(glm::mat4(1.0), delta.asSeconds(), glm::vec3(0, 1, 0));
                 obj.enqueue();
+            }
+            pathtracer.invalidate_counter();
 
             pathtracer.set_view(view);
             pathtracer.set_projection(proj);
-            pathtracer.sample_to_display(scene, window.getSize().x, window.getSize().y);
+            for(int i = samples_per_iteration; i--;)
+                pathtracer.sample_to_display(scene, window.getSize().x, window.getSize().y);
 
             ImGui::Begin("Settings");
             ImGui::Text("Samples: %d (%.00f sps)", pathtracer.sample_count(), 1.f / delta.asSeconds());
@@ -129,6 +137,7 @@ int main(int argc, char** argv)
                 else
                     pathtracer.set_cubemap(0, 0);
             }
+            ImGui::DragInt("Samples Per Iteration", &samples_per_iteration, 0.1f, 1, 10);
 
             ImGui::End();
 

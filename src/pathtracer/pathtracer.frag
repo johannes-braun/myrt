@@ -48,7 +48,7 @@ float next_random();
 vec3 sample_cosine_hemisphere(vec2 uv);
 vec3 bsdf_local_to_world(const in vec3 vector, const in vec3 normal);
 
-float teapot_ior = 1.3;
+float teapot_ior = 1.4;
 
 vec3 lambert_brdf(vec3 albedo, vec3 position, vec3 incoming, vec3 normal, inout vec3 outgoing, inout float pdf)
 {
@@ -74,7 +74,7 @@ void main()
 
     init_random();
     
-    vec3 rc = in_ray_origin + 6 * in_ray_direction;
+    vec3 rc = in_ray_origin + 7 * in_ray_direction;
     vec3 ray_origin = in_ray_origin + 100 * (next_random() - 0.5) * in_pixel_right / u_resolution.x + 100 * (next_random() - 0.5) * in_pixel_up / u_resolution.y;
     vec3 ray_direction = normalize(rc - ray_origin);
     ray_origin = ray_origin + 6 * (next_random() - 0.5) * in_pixel_right / u_resolution.x + 6 * (next_random() - 0.5) * in_pixel_up / u_resolution.y;
@@ -84,15 +84,15 @@ void main()
     vec3 path_color = vec3(0, 0, 0);
     vec3 path_reflectance = vec3(1, 1, 1);
     float path_probability = 1;
-
+    
+    float hit_t = 1.0 / 0.0;
+    vec2 hit_bary = vec2(0, 0);
+    uint hit_triangle = 0;
+    uint hit_geometry = 0;
     while (bounces-- > 0)
     {
         ray_direction = normalize(ray_direction);
 
-        float hit_t;
-        vec2 hit_bary;
-        uint hit_triangle;
-        uint hit_geometry;
         if (!nearest_hit(ray_origin, ray_direction, 1.0 / 0.0, hit_t, hit_bary, hit_triangle, hit_geometry))
         {
             if(u_has_cubemap)
@@ -105,11 +105,6 @@ void main()
                 path_color = path_reflectance * env;
             }
             break;
-        }
-        if(hit_t < 1e-3)
-        {
-        out_color = vec4(hit_bary, 0, 1);
-        return;
         }
 
         uint base_vertex = geometries[hit_geometry].points_base_index;
@@ -133,6 +128,7 @@ void main()
             
         bool is_incoming = dot(normal, ray_direction) < 0;
         normal = faceforward(normal, ray_direction, normal);
+
         
         vec3 teapot_color = hit_triangle > 2400 ? vec3(1.f, 0.1f, 0.06f) : vec3(1);
 
@@ -142,7 +138,7 @@ void main()
         float fresnel = r0 + (1 - r0) * pow(1 - dot(normal, -ray_direction), 5);
         if(fresnel > next_random())
         {
-            path_reflectance *= reflect_brdf(hit_point, ray_direction, normal, ray_direction, probability);
+            path_reflectance *= reflect_brdf(teapot_color, ray_direction, normal, ray_direction, probability);
         }
         else
         {
@@ -151,8 +147,9 @@ void main()
 
         path_probability *= probability;
         
-        vec3 off = -faceforward(normal, -ray_direction, normal) * 1.5e-5f;
-        ray_origin = hit_point + off;
+        vec3 off = ray_direction * 1.5e-5f;
+        vec3 next_ray_origin = hit_point + off;
+        ray_origin = next_ray_origin;
     }
 
     if(draw_counter >= 0)

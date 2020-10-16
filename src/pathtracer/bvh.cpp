@@ -11,7 +11,7 @@ namespace myrt
     };
 
     namespace {
-        std::pair<int, float> compute_split_axis(bvh_node_t const& node, build_state_t const& state)
+        [[nodiscard]] std::pair<int, float> compute_split_axis(bvh_node_t const& node, build_state_t const& state)
         {
             aabb_t sub_aabb;
             auto const count = node.second_child - node.first_child + 1;
@@ -64,8 +64,7 @@ namespace myrt
                 }
             }
 
-            std::pair<int, float> result = std::make_pair(best_axis, (sub_aabb.min + step * float(best_axis_partition))[best_axis]);
-            return result;
+            return std::make_pair(best_axis, (sub_aabb.min + step * float(best_axis_partition))[best_axis]);
         }
     }
 
@@ -343,15 +342,15 @@ namespace myrt
             << (bvh_node_t::type_shift % 10 ? bvh_node_t::type_shift % 10 + '0' : ' ') << ';'
             << "const uint type_mask=1<<type_shift;"
             << "const uint parent_mask=~type_mask;\n#endif\n"
-            << "bool BVH_VISIT_PRIMITIVE(vec3 origin,vec3 direction," << bvh_index_type << " index,inout float max_ray_distance,out bool hits);"
             << "bool BVH_TRAVERSE(" << bvh_index_type << " node_base_index," << bvh_index_type << " primitive_base_index, vec3 ro,vec3 rd,float maxt);";
 
         constexpr auto bvh_traversal = make_str
             << "\n#ifndef BVH_HELPERS_DEFINED\n#define BVH_HELPERS_DEFINED\n" << "bool bvh_ray_aabb_intersect(" << bvh_point_type << " mi," << bvh_point_type << " ma,vec3 o,vec3 id,float mt,inout float t)"
             "{vec3 t135=(mi-o)*id;vec3 t246=(ma-o)*id;vec3 minv=min(t135,t246);vec3 maxv=max(t135,t246);"
-            "float tmin=max(max(minv.x,minv.y),minv.z);float tmax=min(min(maxv.x,maxv.y),maxv.z);t=tmin<0?tmax:tmin;"
-            "return tmax>=0&&tmin<=tmax&&tmin<=mt;}bool bvh_node_is_leaf(const in " << bvh_struct_name << " node){return (node.type_and_parent&type_mask)!=0;}"
+            "float tmin=max(max(minv.x,minv.y),minv.z);float tmax=min(min(maxv.x,maxv.y),maxv.z);"
+            "if(tmax>=0&&tmin<=tmax&&tmin<=mt){t=tmin;return true;}return false;}bool bvh_node_is_leaf(const in " << bvh_struct_name << " node){return (node.type_and_parent&type_mask)!=0;}"
             << bvh_index_type << " bvh_node_parent(const in " << bvh_struct_name << " node){return node.type_and_parent&parent_mask;}\n#endif\n"
+            << "bool BVH_VISIT_PRIMITIVE(vec3 origin,vec3 direction," << bvh_index_type << " index,inout float max_ray_distance,out bool hits);"
             << "bool BVH_TRAVERSE("<<bvh_index_type<<" node_base_index,"<<bvh_index_type<<" primitive_base_index, vec3 ro,vec3 rd,float maxt)"
             "{bool hits_primitive=false;vec3 inv_rd=1.0/rd;uint visited_stack=0;uint left_right_stack=0;" << bvh_index_type << " node_index=node_base_index;float tmp=1.0/0.0;"
             "bool hits_any=bvh_ray_aabb_intersect(" << bvh_node_buffer_name << "[node_base_index].min_extents," << bvh_node_buffer_name << "[node_base_index].max_extents,ro,inv_rd,maxt,tmp);"
@@ -379,7 +378,7 @@ namespace myrt
             "if(barycentric.x<-border_epsilon||barycentric.x>1.0+border_epsilon)return false;"
             "vec3 Q=cross(T,e1);barycentric.y=dot(vec3(direction),Q)*inv_det;"
             "if(barycentric.y<-border_epsilon||barycentric.x+barycentric.y>1.0+border_epsilon)return false;"
-            "float tt=dot(e2,Q)*inv_det;return(t=tt)>float_epsilon;}";
+            "float tt=dot(e2,Q)*inv_det;if(tt>float_epsilon){t=tt;return true;}return false;}";
     }
 
     namespace glsl
@@ -395,13 +394,11 @@ namespace myrt
             }
         }
 
-        [[nodiscard]] std::string bvh_definitions_code(std::string const& traversal_name, std::string const& primitive_name)
+        [[nodiscard]] std::string bvh_definitions_code(std::string const& traversal_name)
         {
-            return def("BVH_VISIT_PRIMITIVE", primitive_name) + 
-                def("BVH_TRAVERSE", traversal_name) + 
+            return def("BVH_TRAVERSE", traversal_name) + 
                 std::string(detail::glsl::bvh_nodes_struct.view())+ 
-                undef("BVH_TRAVERSE") +
-                undef("BVH_VISIT_PRIMITIVE");
+                undef("BVH_TRAVERSE");
         }
         [[nodiscard]] std::string bvh_code(std::string const& traversal_name, std::string const& primitive_name, std::string const& nodes, std::string const& indices)
         {

@@ -157,7 +157,7 @@ namespace myrt
 	};
 
 	namespace glsl {
-		[[nodiscard]] std::string bvh_definitions_code(std::string const& traversal_name, std::string const& primitive_name);
+		[[nodiscard]] std::string bvh_definitions_code(std::string const& traversal_name);
 		[[nodiscard]] std::string bvh_code(std::string const& traversal_name, std::string const& primitive_name, std::string const& nodes, std::string const& indices);
 		[[nodiscard]] std::string intersect_triangle_code();
 	}
