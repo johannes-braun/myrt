@@ -1,4 +1,27 @@
-R"(
+#pragma once
+
+#include "intersect_triangle.h"
+
+#define MYRT_BVH_NODES_BUFFER bvh_nodes
+#define MYRT_BVH_INDICES_BUFFER bvh_indices
+#define MYRT_BVH_TRAVERSE bvh_traverse
+#define MYRT_BVH_VISIT_PRIMITIVE visit_triangle
+#include "bvh.impl.h"
+#undef MYRT_BVH_VISIT_PRIMITIVE
+#undef MYRT_BVH_TRAVERSE
+#undef MYRT_BVH_INDICES_BUFFER
+#undef MYRT_BVH_NODES_BUFFER
+
+#define MYRT_BVH_NODES_BUFFER global_bvh_nodes
+#define MYRT_BVH_INDICES_BUFFER global_bvh_indices
+#define MYRT_BVH_TRAVERSE bvh_traverse_global
+#define MYRT_BVH_VISIT_PRIMITIVE visit_object_aabb
+#include "bvh.impl.h"
+#undef MYRT_BVH_VISIT_PRIMITIVE
+#undef MYRT_BVH_TRAVERSE
+#undef MYRT_BVH_INDICES_BUFFER
+#undef MYRT_BVH_NODES_BUFFER
+
 struct traversal_state_t
 {
     bool any_hit;
@@ -37,8 +60,8 @@ bool visit_triangle(vec3 ray_origin, vec3 ray_direction, uint index, inout float
 
     float t_current = 0;
     vec2 barycentric_current = vec2(0, 0);
-    hits = intersect_triangle(ray_origin, ray_direction, p0, p1, p2, t_current, barycentric_current) && 
-        t_current < max_ray_distance && 
+    hits = intersect_triangle(ray_origin, ray_direction, p0, p1, p2, t_current, barycentric_current) &&
+        t_current < max_ray_distance&&
         traversal.t > t_current;
 
     if (hits)
@@ -55,13 +78,13 @@ bool visit_triangle(vec3 ray_origin, vec3 ray_direction, uint index, inout float
 
 bool visit_object_aabb(vec3 ray_origin, vec3 ray_direction, uint i, inout float max_ray_distance, out bool hits)
 {
-    traversal.base_index=geometries[i].indices_base_index;
-    traversal.base_vertex=geometries[i].points_base_index;
+    traversal.base_index = geometries[i].indices_base_index;
+    traversal.base_vertex = geometries[i].points_base_index;
     vec3 ro = (geometries[i].inverse_transformation * vec4(ray_origin, 1)).xyz;
     vec3 rd = (((geometries[i].inverse_transformation) * vec4(ray_direction, 0)).xyz);
-    bool current_hits = bvh_traverse(geometries[i].bvh_node_base_index, geometries[i].bvh_index_base_index, ro, rd, max_ray_distance) && 
+    bool current_hits = bvh_traverse(geometries[i].bvh_node_base_index, geometries[i].bvh_index_base_index, ro, rd, max_ray_distance) &&
         traversal.global_t > traversal.t;
-    
+
     if (current_hits)
     {
         traversal.global_t = traversal.t;
@@ -72,7 +95,7 @@ bool visit_object_aabb(vec3 ray_origin, vec3 ray_direction, uint i, inout float 
     }
 
     hits = current_hits;
-    
+
     if (traversal.any_hit && hits) return true;
     return false;
 }
@@ -133,7 +156,7 @@ void init_random()
 {
     random_count = int(textureSize(u_random_texture, 0));
     ivec2 pixel = ivec2(gl_FragCoord.xy);
-    int seed_base = int(random_value(pixel.x^0xba77fa) * random_primes[0] + random_value(pixel.y^0xcca6df) * random_primes[1] + random_value(int(u_random_seed)) 
+    int seed_base = int(random_value(pixel.x ^ 0xba77fa) * random_primes[0] + random_value(pixel.y ^ 0xcca6df) * random_primes[1] + random_value(int(u_random_seed))
         + random_value(int(u_draw_counter)));
     random_value(seed_base + int(0xffaf86 * texelFetch(u_random_texture, int(seed_base % random_count), 0).x));
 }
@@ -167,4 +190,3 @@ vec3 bsdf_local_to_world(const in vec3 vector, const in vec3 normal)
     }
     return normalize(mat3(u, cross(normal, u), normal) * vector);
 }
-)"

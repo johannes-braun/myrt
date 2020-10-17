@@ -3,14 +3,13 @@
 #include <sstream>
 #include "utils.hpp"
 #include <glm/ext.hpp>
+#include <glsp/preprocess.hpp>
 
 namespace myrt
 {
-    namespace detail {
-        constexpr std::string_view pathtracer_fragment_shader_base = {
-#include "pathtracer.frag"
-        };
+    const static std::filesystem::path res_dir = "../../../res";
 
+    namespace detail {
         template<typename T, typename K>
         [[nodiscard]] bool set_if_different(T& t, K&& new_value)
         {
@@ -37,19 +36,6 @@ namespace myrt
             return size;
         }
     }
-
-    constexpr std::string_view pathtracer_vertex_shader = {
-#include "pathtracer.vert"
-    };
-
-    const std::string pathtracer_fragment_shader = (std::stringstream() <<
-        "#version 460 core\n" <<
-        glsl::bvh_definitions_code("bvh_traverse") <<
-        glsl::bvh_definitions_code("bvh_traverse_global") <<
-        glsl::intersect_triangle_code() <<
-        detail::pathtracer_fragment_shader_base <<
-        glsl::bvh_code("bvh_traverse", "visit_triangle", "bvh_nodes", "bvh_indices") <<
-        glsl::bvh_code("bvh_traverse_global", "visit_object_aabb", "global_bvh_nodes", "global_bvh_indices")).str();
 
     pathtracer::~pathtracer()
     {
@@ -141,7 +127,16 @@ namespace myrt
     void pathtracer::initialize()
     {
         m_is_initialized = true;
-        m_program = make_program(pathtracer_vertex_shader, pathtracer_fragment_shader);
+
+        const auto vertex_shader = glsp::preprocess_file(res_dir / "../src/glsl/pathtracer.vert");
+        const auto fragment_shader = glsp::preprocess_file(res_dir / "../src/glsl/pathtracer.frag", {}, {
+            glsp::definition("MYRT_POINT_TYPE", detail::glsl::bvh_point_type),
+            glsp::definition("MYRT_INDEX_TYPE", detail::glsl::bvh_index_type),
+            glsp::definition("MYRT_BVH_NODE_PADDING_BYTES", std::to_string((sizeof(aligned_node_t) - sizeof(bvh_node_t)) / sizeof(detail::default_index_type))),
+            glsp::definition("MYRT_BVH_NODE_TYPE_SHIFT", std::to_string(bvh_node_t::type_shift)),
+            glsp::definition("MYRT_BVH_NODE_STRUCT", detail::glsl::bvh_struct_name) });
+
+        m_program = make_program(vertex_shader.contents, fragment_shader.contents);
         glCreateFramebuffers(1, &m_framebuffer);
         glCreateVertexArrays(1, &m_vertex_array);
 
@@ -152,31 +147,31 @@ namespace myrt
         m_random_texture = m_texture_provider.get(GL_TEXTURE_1D, GL_R32F, int(random_texture_data.size()), 1);
         m_random_texture->lock();
         glTextureSubImage1D(m_random_texture->id(), 0, 0, GLsizei(random_texture_data.size()), GL_RED, GL_FLOAT, random_texture_data.data());
-    }
+            }
 
-    void pathtracer::deinitialize()
-    {
-        glDeleteProgram(m_program);
-        glDeleteFramebuffers(1, &m_framebuffer);
-        glDeleteVertexArrays(1, &m_vertex_array);
-        m_random_texture->unlock();
-        m_current_sample_texture.reset();
-        m_last_sample_texture.reset();
-        m_is_initialized = false;
-    }
+            void pathtracer::deinitialize()
+            {
+                glDeleteProgram(m_program);
+                glDeleteFramebuffers(1, &m_framebuffer);
+                glDeleteVertexArrays(1, &m_vertex_array);
+                m_random_texture->unlock();
+                m_current_sample_texture.reset();
+                m_last_sample_texture.reset();
+                m_is_initialized = false;
+            }
 
-    void pathtracer::invalidate_texture()
-    {
-        invalidate_counter();
-        m_current_sample_texture.reset();
-        m_last_sample_texture.reset();
+            void pathtracer::invalidate_texture()
+            {
+                invalidate_counter();
+                m_current_sample_texture.reset();
+                m_last_sample_texture.reset();
+            }
+            void pathtracer::invalidate_counter()
+            {
+                m_sample_counter = 0;
+            }
+            int pathtracer::sample_count() const noexcept
+            {
+                return m_sample_counter;
+            }
     }
-    void pathtracer::invalidate_counter()
-    {
-        m_sample_counter = 0;
-    }
-    int pathtracer::sample_count() const noexcept
-    {
-        return m_sample_counter;
-    }
-}

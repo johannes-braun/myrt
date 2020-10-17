@@ -1,4 +1,9 @@
-R"(
+#version 450 core
+
+#include "bvh.h"
+bool visit_triangle(MYRT_INDEX_TYPE node_base_index, MYRT_INDEX_TYPE primitive_base_index, vec3 ro, vec3 rd, float maxt);
+bool visit_object_aabb(MYRT_INDEX_TYPE node_base_index, MYRT_INDEX_TYPE primitive_base_index, vec3 ro, vec3 rd, float maxt);
+
 struct drawable_geometry_t
 {
     mat4 transformation;
@@ -157,5 +162,5 @@ void main()
     else
         out_color = vec4(path_color, 1);
 }
-)"
-#include "pathtracer_internal.frag"
+
+#include "pathtracer_internal.h"

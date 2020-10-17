@@ -32,6 +32,7 @@ const static std::filesystem::path res_dir = "../../../res";
 
 std::pair<GLuint, GLuint> load_cubemap();
 
+
 int main(int argc, char** argv)
 {
     sf::ContextSettings settings;
@@ -89,6 +90,7 @@ int main(int argc, char** argv)
         auto [cubemap, cube_sampler] = load_cubemap();
         bool cubemap_enabled = false;
         int samples_per_iteration = 1;
+        bool animate = true;
 
         ImGui::SFML::Init(window, false);
         ImGui::GetIO().Fonts->AddFontFromFileTTF((res_dir / "alata.ttf").string().c_str(), 20);
@@ -107,12 +109,15 @@ int main(int argc, char** argv)
             time += delta.asSeconds();
             ImGui::SFML::Update(window, delta);
 
-            for (auto& obj : objects)
+            if (animate)
             {
-                obj.transformation = obj.transformation * glm::rotate(glm::mat4(1.0), delta.asSeconds(), glm::vec3(0, 1, 0));
-                obj.enqueue();
+                for (auto& obj : objects)
+                {
+                    obj.transformation = obj.transformation * glm::rotate(glm::mat4(1.0), delta.asSeconds(), glm::vec3(0, 1, 0));
+                    obj.enqueue();
+                }
+                pathtracer.invalidate_counter();
             }
-            pathtracer.invalidate_counter();
 
             pathtracer.set_view(view);
             pathtracer.set_projection(proj);
@@ -138,6 +143,7 @@ int main(int argc, char** argv)
                     pathtracer.set_cubemap(0, 0);
             }
             ImGui::DragInt("Samples Per Iteration", &samples_per_iteration, 0.1f, 1, 10);
+            ImGui::Checkbox("Enable Animation", &animate);
 
             ImGui::End();
 

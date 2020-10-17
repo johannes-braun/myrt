@@ -22,13 +22,8 @@ namespace myrt
 		namespace glsl
 		{
 			constexpr char const bvh_struct_name[] = "bvh_node_t";
-			constexpr char const bvh_node_buffer_name[] = "BVH_NODES";
 			constexpr char const bvh_index_type[] = "uint";
-			constexpr char const bvh_indices_buffer_name[] = "BVH_INDICES";
 			constexpr char const bvh_point_type[] = "vec3";
-
-			// Fixed signature: bool(index_type index, inout float tmax);
-			constexpr char const bvh_visit_primitive_function_name[] = "myrt_bvh_visit_primitive";
 		}
 
 		using default_point_type = glm::vec3;

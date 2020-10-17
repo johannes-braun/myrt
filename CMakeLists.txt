@@ -18,7 +18,7 @@ add_executable(myrt
     "src/pathtracer/pathtracer.cpp" 
     "src/pathtracer/scene.hpp" 
     "src/pathtracer/scene.cpp" 
-    "src/pathtracer/utils.cpp" )
+    "src/pathtracer/utils.cpp"   "src/glsl/intersect_triangle.h" "src/glsl/pathtracer_internal.h")
 target_compile_features(myrt PUBLIC cxx_std_20)
 
 find_package(SFML 2 COMPONENTS graphics audio main network system window REQUIRED)
@@ -32,3 +32,14 @@ target_include_directories(myrt PUBLIC ${Stb_INCLUDE_DIR})
 find_package(imgui CONFIG REQUIRED)
 find_package(ImGui-SFML CONFIG REQUIRED)
 target_link_libraries(myrt PRIVATE ImGui-SFML::ImGui-SFML)
+
+# GLShader
+find_package(Git REQUIRED)
+set(EXT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ext)
+if(NOT EXISTS ${EXT_DIR}/glsp)
+    execute_process(COMMAND ${GIT_EXECUTABLE} 
+        clone https://github.com/johannes-braun/GLshader.git ${EXT_DIR}/glsp)
+endif()
+
+add_subdirectory(${EXT_DIR}/glsp)
+target_link_libraries(myrt PRIVATE glsp::glsp)

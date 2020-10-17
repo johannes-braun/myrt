@@ -1,4 +1,4 @@
-R"(#version 460 core
+#version 450 core
 
 const vec2 positions[3] = vec2[3](
     vec2(-1, -1),
@@ -23,4 +23,3 @@ void main()
     out_pixel_up = (u_inv_view * vec4(0, 1, 0, 0)).xyz;
     out_ray_direction = (u_inv_view * u_inv_proj*vec4(gl_Position.xy, 1, 1)).xyz;
 }
-)"
