@@ -147,31 +147,31 @@ namespace myrt
         m_random_texture = m_texture_provider.get(GL_TEXTURE_1D, GL_R32F, int(random_texture_data.size()), 1);
         m_random_texture->lock();
         glTextureSubImage1D(m_random_texture->id(), 0, 0, GLsizei(random_texture_data.size()), GL_RED, GL_FLOAT, random_texture_data.data());
-            }
-
-            void pathtracer::deinitialize()
-            {
-                glDeleteProgram(m_program);
-                glDeleteFramebuffers(1, &m_framebuffer);
-                glDeleteVertexArrays(1, &m_vertex_array);
-                m_random_texture->unlock();
-                m_current_sample_texture.reset();
-                m_last_sample_texture.reset();
-                m_is_initialized = false;
-            }
-
-            void pathtracer::invalidate_texture()
-            {
-                invalidate_counter();
-                m_current_sample_texture.reset();
-                m_last_sample_texture.reset();
-            }
-            void pathtracer::invalidate_counter()
-            {
-                m_sample_counter = 0;
-            }
-            int pathtracer::sample_count() const noexcept
-            {
-                return m_sample_counter;
-            }
     }
+
+    void pathtracer::deinitialize()
+    {
+        glDeleteProgram(m_program);
+        glDeleteFramebuffers(1, &m_framebuffer);
+        glDeleteVertexArrays(1, &m_vertex_array);
+        m_random_texture->unlock();
+        m_current_sample_texture.reset();
+        m_last_sample_texture.reset();
+        m_is_initialized = false;
+    }
+
+    void pathtracer::invalidate_texture()
+    {
+        invalidate_counter();
+        m_current_sample_texture.reset();
+        m_last_sample_texture.reset();
+    }
+    void pathtracer::invalidate_counter()
+    {
+        m_sample_counter = 0;
+    }
+    int pathtracer::sample_count() const noexcept
+    {
+        return m_sample_counter;
+    }
+}
