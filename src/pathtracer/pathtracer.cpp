@@ -53,13 +53,37 @@ namespace myrt
         sample_internal(scene, target_framebuffer, width, height);
     }
 
+    void pathtracer::reload_shaders() {
+        const auto vertex_shader = glsp::preprocess_file(res_dir / "../src/glsl/pathtracer.vert");
+        const auto fragment_shader = glsp::preprocess_file(res_dir / "../src/glsl/pathtracer.frag", {}, {
+            glsp::definition("MYRT_POINT_TYPE", detail::glsl::bvh_point_type),
+            glsp::definition("MYRT_INDEX_TYPE", detail::glsl::bvh_index_type),
+            glsp::definition("MYRT_BVH_NODE_PADDING_BYTES", std::to_string((sizeof(aligned_node_t) - sizeof(bvh_node_t)) / sizeof(detail::default_index_type))),
+            glsp::definition("MYRT_BVH_NODE_TYPE_SHIFT", std::to_string(bvh_node_t::type_shift)),
+            glsp::definition("MYRT_BVH_NODE_STRUCT", detail::glsl::bvh_struct_name) });
+
+        const auto new_program = make_program(vertex_shader.contents, fragment_shader.contents);
+        if (new_program)
+        {
+            if (m_program) glDeleteProgram(m_program.value());
+            m_program = new_program;
+            invalidate_counter();
+        }
+    }
+
     void pathtracer::sample_internal(scene& scene, GLuint target_framebuffer, int width, int height)
     {
         const std::uniform_int_distribution<unsigned> distribution{ 0, max_uniform_distribution_value };
-        m_texture_provider.new_frame();
 
         if (!m_is_initialized)
             initialize();
+
+        scene.bind_buffers();
+        if (!m_program)
+            return;
+
+        m_texture_provider.new_frame();
+        repopulate_random_texture();
 
         if (detail::set_if_different(m_last_scene, &scene))
             invalidate_counter();
@@ -78,8 +102,8 @@ namespace myrt
         glNamedFramebufferTexture(m_framebuffer, GL_COLOR_ATTACHMENT0, m_current_sample_texture->id(), 0);
 
         glBindFramebuffer(GL_FRAMEBUFFER, m_framebuffer);
-        glUseProgram(m_program);
-        scene.bind_buffers();
+        glUseProgram(m_program.value());
+
         if (glIsTexture(m_cubemap) && glIsSampler(m_cubemap_sampler)) {
             glUniform1i(5, true);
             glBindSampler(0, m_cubemap_sampler);
@@ -91,6 +115,19 @@ namespace myrt
             glBindSampler(0, 0);
             glBindTextureUnit(0, 0);
         }
+
+        if (glIsTexture(m_bokeh)) {
+            glUniform1i(7, true);
+            glBindTextureUnit(3, m_bokeh);
+        }
+        else
+        {
+            glUniform1i(7, false);
+            glBindTextureUnit(3, 0);
+        }
+
+        glUniform1f(6, m_lens_radius);
+        glUniform1f(8, m_focus);
         glBindTextureUnit(1, m_random_texture->id());
         glBindTextureUnit(2, m_last_sample_texture->id());
         glBindVertexArray(m_vertex_array);
@@ -112,6 +149,16 @@ namespace myrt
         if (detail::set_if_different(m_projection_matrix, matrix))
             invalidate_counter();
     }
+    void pathtracer::set_bokeh(GLuint bokeh)
+    {
+        if (detail::set_if_different(m_bokeh, bokeh))
+            invalidate_counter();
+    }
+    void pathtracer::set_focus(float focus)
+    {
+        if (detail::set_if_different(m_focus, focus))
+            invalidate_counter();
+    }
     void pathtracer::set_view(glm::mat4 matrix)
     {
         if (detail::set_if_different(m_view_matrix, matrix))
@@ -124,34 +171,30 @@ namespace myrt
         if (cubemap_changed || sampler_changed)
             invalidate_counter();
     }
+    void pathtracer::set_lens_radius(float radius)
+    {
+        if (detail::set_if_different(m_lens_radius, radius))
+            invalidate_counter();
+    }
     void pathtracer::initialize()
     {
         m_is_initialized = true;
-
-        const auto vertex_shader = glsp::preprocess_file(res_dir / "../src/glsl/pathtracer.vert");
-        const auto fragment_shader = glsp::preprocess_file(res_dir / "../src/glsl/pathtracer.frag", {}, {
-            glsp::definition("MYRT_POINT_TYPE", detail::glsl::bvh_point_type),
-            glsp::definition("MYRT_INDEX_TYPE", detail::glsl::bvh_index_type),
-            glsp::definition("MYRT_BVH_NODE_PADDING_BYTES", std::to_string((sizeof(aligned_node_t) - sizeof(bvh_node_t)) / sizeof(detail::default_index_type))),
-            glsp::definition("MYRT_BVH_NODE_TYPE_SHIFT", std::to_string(bvh_node_t::type_shift)),
-            glsp::definition("MYRT_BVH_NODE_STRUCT", detail::glsl::bvh_struct_name) });
-
-        m_program = make_program(vertex_shader.contents, fragment_shader.contents);
+        reload_shaders();
         glCreateFramebuffers(1, &m_framebuffer);
         glCreateVertexArrays(1, &m_vertex_array);
 
+        m_random_texture = m_texture_provider.get(GL_TEXTURE_1D, GL_R32F, int(random_number_count), 1);
+        m_random_texture->lock();
+    }
+    void pathtracer::repopulate_random_texture() {
         std::vector<float> random_texture_data(random_number_count);
         std::uniform_real_distribution<float> distribution(0.f, 1.f);
         std::generate(random_texture_data.begin(), random_texture_data.end(), [&] {return distribution(m_random_engine); });
-
-        m_random_texture = m_texture_provider.get(GL_TEXTURE_1D, GL_R32F, int(random_texture_data.size()), 1);
-        m_random_texture->lock();
         glTextureSubImage1D(m_random_texture->id(), 0, 0, GLsizei(random_texture_data.size()), GL_RED, GL_FLOAT, random_texture_data.data());
     }
-
     void pathtracer::deinitialize()
     {
-        glDeleteProgram(m_program);
+        if(m_program) glDeleteProgram(m_program.value());
         glDeleteFramebuffers(1, &m_framebuffer);
         glDeleteVertexArrays(1, &m_vertex_array);
         m_random_texture->unlock();

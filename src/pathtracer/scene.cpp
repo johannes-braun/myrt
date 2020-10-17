@@ -10,6 +10,11 @@ namespace myrt
         scene* scene = nullptr;
     };
 
+    struct material_t
+    {
+        int index = 0;
+    };
+
     namespace detail
     {
         namespace {
@@ -23,6 +28,15 @@ namespace myrt
 
     scene::~scene()
     {
+        glDeleteBuffers(1, &m_gl_objects.indices_buffer);
+        glDeleteBuffers(1, &m_gl_objects.vertices_buffer);
+        glDeleteBuffers(1, &m_gl_objects.normals_buffer);
+        glDeleteBuffers(1, &m_gl_objects.bvh_nodes_buffer);
+        glDeleteBuffers(1, &m_gl_objects.bvh_indices_buffer);
+        glDeleteBuffers(1, &m_gl_objects.drawable_buffer);
+        glDeleteBuffers(1, &m_gl_objects.materials_buffer);
+        glDeleteBuffers(1, &m_gl_objects.global_bvh_nodes_buffer);
+        glDeleteBuffers(1, &m_gl_objects.global_bvh_indices_buffer);
         for (auto const& geometry : m_available_geometries)
         {
             geometry->scene = nullptr;
@@ -95,6 +109,14 @@ namespace myrt
             m_drawables.clear();
         }
     }
+    const scene::material_pointer& scene::push_material(material_info_t info)
+    {
+        m_materials_changed = true;
+        auto const& ptr = m_available_materials.emplace_back(std::make_unique<material_t>());
+        ptr->index = static_cast<int>(m_material_infos.size());
+        m_material_infos.push_back(std::move(info));
+        return ptr;
+    }
 
     scene::scene() {
         glCreateBuffers(1, &m_gl_objects.indices_buffer);
@@ -103,21 +125,31 @@ namespace myrt
         glCreateBuffers(1, &m_gl_objects.bvh_nodes_buffer);
         glCreateBuffers(1, &m_gl_objects.bvh_indices_buffer);
         glCreateBuffers(1, &m_gl_objects.drawable_buffer);
+        glCreateBuffers(1, &m_gl_objects.materials_buffer);
         glCreateBuffers(1, &m_gl_objects.global_bvh_nodes_buffer);
         glCreateBuffers(1, &m_gl_objects.global_bvh_indices_buffer);
-    }
 
-    void scene::enqueue(const geometry_pointer& geometry, glm::mat4 const& transformation)
+        m_default_material = push_material(material_info_t{
+            .albedo_rgba = glm::u8vec4(255, 0, 255, 255),
+            .ior = 1.0
+            });
+    }
+    const scene::material_pointer& scene::default_material() const
+    {
+        return m_default_material;
+    }
+    void scene::enqueue(const geometry_pointer& geometry, const material_pointer& material, glm::mat4 const& transformation)
     {
         if (geometry)
-            enqueue(geometry.get(), transformation);
+            enqueue(geometry.get(), material.get(), transformation);
     }
-    void scene::enqueue(geometry_t const* geometry, glm::mat4 const& transformation)
+    void scene::enqueue(geometry_t const* geometry, material_t const* material, glm::mat4 const& transformation)
     {
         m_drawables.push_back(drawable_geometry_t{
             .transformation = transformation,
             .inverse_transformation = inverse(transformation),
-            .geometry_info = geometry->info
+            .geometry_info = geometry->info,
+            .material_index = material ? material->index : 0
             });
 
         aabb_t transformed;
@@ -146,6 +178,11 @@ namespace myrt
             m_drawables.clear();
             m_drawable_aabbs.clear();
         }
+        if (m_materials_changed)
+        {
+            m_materials_changed = false;
+            fill_buffer(m_gl_objects.materials_buffer, m_material_infos);
+        }
         if (m_geometries_changed)
         {
             m_geometries_changed = false;
@@ -169,13 +206,14 @@ namespace myrt
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, buffer_binding_drawables, m_gl_objects.drawable_buffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, buffer_binding_global_bvh_nodes, m_gl_objects.global_bvh_nodes_buffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, buffer_binding_global_bvh_indices, m_gl_objects.global_bvh_indices_buffer);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, buffer_binding_materials, m_gl_objects.materials_buffer);
     }
 
     void geometric_object::enqueue() const
     {
         if (geometry && geometry->scene)
         {
-            geometry->scene->enqueue(geometry, transformation);
+            geometry->scene->enqueue(geometry, material, transformation);
         }
     }
 }

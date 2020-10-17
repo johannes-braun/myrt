@@ -21,6 +21,8 @@
 #include <stb_image.h>
 #include <imgui.h>
 
+#include <rnu/camera.hpp>
+
 std::experimental::generator<std::reference_wrapper<sf::Event>> co_poll(sf::Window& window)
 {
     sf::Event event{};
@@ -44,6 +46,7 @@ int main(int argc, char** argv)
     window.setActive(false);
 
     std::atomic_bool close = false;
+    volatile float focus = 5.0f;
     std::thread render_thread([&] {
         window.setActive(true);
         gladLoadGL();
@@ -77,29 +80,47 @@ int main(int argc, char** argv)
 
         std::vector<myrt::geometric_object> objects;
         std::minstd_rand rng(1);
-        for (int i = -2; i < 2; ++i)
-            for (int j = -2; j < 2; ++j)
+        const auto rcol = [&] {
+            return glm::u8vec4(255*rng(), 255*rng(), 255*rng(), 255);
+        };
+
+        for (int i = -2; i < 3; ++i)
+            for (int j = -2; j < 3; ++j)
             {
                 auto& obj = objects.emplace_back();
-                obj.geometry = (cube && (i + (j % 2)) % 2 == 0) ? cube : teapot;
+                obj.geometry = (cube && (i + (j % 2)) % 2 == 0) ? teapot : teapot;
+                obj.material = scene.push_material({
+                    .albedo_rgba = rcol(),
+                    .ior = 1.2f
+                    });
                 obj.transformation = glm::translate(glm::mat4(1.0), 2.2f * glm::vec3(i, 0.1 * i, j))
                     * glm::rotate(glm::mat4(1.0f), glm::radians(float(rng())), normalize(glm::vec3(glm::uvec3(rng(), rng(), rng() + 1))))
-                    * glm::scale(glm::mat4(1.0), glm::vec3(1, 0.1f + 2.f * (rng() / float(rng.max())), 1));
+                    * glm::scale(glm::mat4(1.0), glm::vec3(1, 0.5f + 1.f * (rng() / float(rng.max())), 1));
             }
 
         auto [cubemap, cube_sampler] = load_cubemap();
         bool cubemap_enabled = false;
+        bool bokeh_enabled = false;
         int samples_per_iteration = 1;
         bool animate = true;
+        float lens_radius = 100.0f;
 
         ImGui::SFML::Init(window, false);
         ImGui::GetIO().Fonts->AddFontFromFileTTF((res_dir / "alata.ttf").string().c_str(), 20);
         ImGui::SFML::UpdateFontTexture();
 
-        auto proj = glm::perspectiveFov(glm::radians(60.f), float(window.getSize().x), float(window.getSize().y), 0.01f, 1000.f);
         auto view = glm::lookAt(glm::vec3(5, 5.5, 4.5), glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
 
+        GLuint bokeh{};
+        glCreateTextures(GL_TEXTURE_2D, 1, &bokeh);
+        int bw{}, bh{}, bc{};
+        stbi_uc* img_data = stbi_load((res_dir / "bokeh_hexagon.jpg").string().c_str(), &bw, &bh, &bc, 3);
+        glTextureStorage2D(bokeh, 1, GL_RGB8, bw, bh);
+        glTextureSubImage2D(bokeh, 0, 0, 0, bw, bh, GL_RGB, GL_UNSIGNED_BYTE, img_data);
+        stbi_image_free(img_data);
+
         myrt::pathtracer pathtracer;
+        rnu::camera<float> camera({ 0.0f, 0.0f, -15.f });
 
         sf::Clock delta_time;
         float time = 0.0;
@@ -118,9 +139,28 @@ int main(int argc, char** argv)
                 }
                 pathtracer.invalidate_counter();
             }
+            auto proj = glm::perspectiveFov(glm::radians(60.f), float(window.getSize().x), float(window.getSize().y), 0.01f, 1000.f);
 
-            pathtracer.set_view(view);
+            
+            if (window.hasFocus() && !ImGui::GetIO().WantCaptureKeyboard) {
+                camera.axis(delta.asSeconds() * (1.f + 5 * sf::Keyboard::isKeyPressed(sf::Keyboard::LShift)),
+                    sf::Keyboard::isKeyPressed(sf::Keyboard::W),
+                    sf::Keyboard::isKeyPressed(sf::Keyboard::S),
+                    sf::Keyboard::isKeyPressed(sf::Keyboard::A),
+                    sf::Keyboard::isKeyPressed(sf::Keyboard::D),
+                    sf::Keyboard::isKeyPressed(sf::Keyboard::E),
+                    sf::Keyboard::isKeyPressed(sf::Keyboard::Q));
+            }
+            if (window.hasFocus() && !ImGui::GetIO().WantCaptureMouse) {
+                camera.mouse(
+                    float(sf::Mouse::getPosition().x),
+                    float(sf::Mouse::getPosition().y),
+                    sf::Mouse::isButtonPressed(sf::Mouse::Left));
+            }
+
+            pathtracer.set_view(glm::make_mat4(camera.matrix(true).data()));
             pathtracer.set_projection(proj);
+            pathtracer.set_focus(focus);
             for(int i = samples_per_iteration; i--;)
                 pathtracer.sample_to_display(scene, window.getSize().x, window.getSize().y);
 
@@ -142,8 +182,23 @@ int main(int argc, char** argv)
                 else
                     pathtracer.set_cubemap(0, 0);
             }
+            if (ImGui::Checkbox("Enable Bokeh", &bokeh_enabled))
+            {
+                if (bokeh_enabled)
+                    pathtracer.set_bokeh(bokeh);
+                else
+                    pathtracer.set_bokeh(0);
+            }
             ImGui::DragInt("Samples Per Iteration", &samples_per_iteration, 0.1f, 1, 10);
+            if (ImGui::DragFloat("Lens Radius", &lens_radius, 0.1f, 0.0f, 1000.0f))
+            {
+                pathtracer.set_lens_radius(lens_radius);
+            }
             ImGui::Checkbox("Enable Animation", &animate);
+            if (ImGui::Button("Reload Shaders"))
+            {
+                pathtracer.reload_shaders();
+            }
 
             ImGui::End();
 
@@ -160,9 +215,14 @@ int main(int argc, char** argv)
         for (auto const& event : co_poll(window))
         {
             ImGui::SFML::ProcessEvent(event);
-            if (event.get().type == sf::Event::Closed)
+            switch (event.get().type)
             {
+            case sf::Event::Closed:
                 close = true;
+                break;
+            case sf::Event::MouseWheelScrolled:
+                focus += 0.2f * event.get().mouseWheelScroll.delta;
+                break;
             }
         }
         std::this_thread::yield();

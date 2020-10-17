@@ -2,6 +2,10 @@
 
 #include "intersect_triangle.h"
 
+// Forward declare visitor functions.
+bool visit_triangle(MYRT_INDEX_TYPE node_base_index, MYRT_INDEX_TYPE primitive_base_index, vec3 ro, vec3 rd, float maxt);
+bool visit_object_aabb(MYRT_INDEX_TYPE node_base_index, MYRT_INDEX_TYPE primitive_base_index, vec3 ro, vec3 rd, float maxt);
+
 #define MYRT_BVH_NODES_BUFFER bvh_nodes
 #define MYRT_BVH_INDICES_BUFFER bvh_indices
 #define MYRT_BVH_TRAVERSE bvh_traverse

@@ -2,6 +2,8 @@
 #include <vector>
 #include <string>
 #include <iostream>
+#include <array>
+#include <sstream>
 
 namespace myrt
 {
@@ -23,7 +25,23 @@ namespace myrt
         }
     }
 
-    GLuint make_program(std::span<std::string_view const> vertex_shader_codes, std::span<std::string_view const> fragment_shader_codes)
+    void pretty_print_line(std::string line) {
+        if (line.find("error") != std::string::npos)
+            line = "\033[0;31m" + line + "\033[0m";
+        else if (line.find("warning") != std::string::npos)
+            line = "\033[0;33m" + line + "\033[0m";
+        std::cout << line << '\n';
+    }
+
+    void pretty_print(std::string const& log) {
+        std::stringstream log_stream(log);
+        for (std::string line; std::getline(log_stream, line);)
+        {
+            pretty_print_line(line);
+        }
+    }
+
+    std::optional<GLuint> make_program(std::span<std::string_view const> vertex_shader_codes, std::span<std::string_view const> fragment_shader_codes)
     {
         auto const [vs_codes, vs_lengths] = detail::make_string_lengths_lists(vertex_shader_codes);
         auto const [fs_codes, fs_lengths] = detail::make_string_lengths_lists(fragment_shader_codes);
@@ -39,24 +57,27 @@ namespace myrt
         glAttachShader(prog, fs);
         glLinkProgram(prog);
 
-        int status = 0;
-        glGetProgramiv(prog, GL_LINK_STATUS, &status);
-        if (!status)
-        {
-            glGetProgramiv(prog, GL_INFO_LOG_LENGTH, &status);
-            std::string info_log(status, ' ');
-            glGetProgramInfoLog(prog, status, &status, info_log.data());
-            std::cout << info_log << '\n';
-        }
+        int log_length = 0;
+        glGetProgramiv(prog, GL_INFO_LOG_LENGTH, &log_length);
+        std::string info_log(log_length, ' ');
+        glGetProgramInfoLog(prog, log_length, &log_length, info_log.data());
+        pretty_print(info_log);
 
         glDetachShader(prog, vs);
         glDetachShader(prog, fs);
         glDeleteShader(vs);
         glDeleteShader(fs);
 
+        int link_status = 0;
+        glGetProgramiv(prog, GL_LINK_STATUS, &link_status);
+        if (link_status != GL_TRUE)
+        {
+            glDeleteProgram(prog);
+            return std::nullopt;
+        }
         return prog;
     }
-    GLuint make_program(std::string_view const vertex_shader_code, std::string_view const fragment_shader_code)
+    std::optional<GLuint> make_program(std::string_view const vertex_shader_code, std::string_view const fragment_shader_code)
     {
         return make_program({ &vertex_shader_code, 1 }, {&fragment_shader_code, 1});
     }

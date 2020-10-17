@@ -21,12 +21,20 @@ namespace myrt
         index_type points_base_index;
     };
 
+    struct material_info_t
+    {
+        glm::u8vec4 albedo_rgba;
+        float ior;
+    };
+
     struct geometry_t;
+    struct material_t;
 
     class scene
     {
     public:
         using geometry_pointer = std::shared_ptr<geometry_t>;
+        using material_pointer = std::shared_ptr<material_t>;
 
         constexpr static unsigned buffer_binding_bvh_nodes = 0;
         constexpr static unsigned buffer_binding_bvh_indices = 1;
@@ -37,6 +45,7 @@ namespace myrt
 
         constexpr static unsigned buffer_binding_global_bvh_nodes = 6;
         constexpr static unsigned buffer_binding_global_bvh_indices = 7;
+        constexpr static unsigned buffer_binding_materials = 8;
 
         using index_type = detail::default_index_type;
         using point_type = detail::default_point_type;
@@ -48,11 +57,15 @@ namespace myrt
             std::span<point_type const> points,
             std::span<point_type const> normals
         );
+        [[nodiscard]] const material_pointer& push_material(material_info_t info);
+
         void erase_geometry_direct(const geometry_pointer& geometry);
         void erase_geometry_indirect(const geometry_pointer& geometry);
-        void enqueue(geometry_t const* geometry, glm::mat4 const& transformation);
-        void enqueue(const geometry_pointer& geometry, glm::mat4 const& transformation);
+        void enqueue(geometry_t const* geometry, material_t const* material, glm::mat4 const& transformation);
+        void enqueue(const geometry_pointer& geometry, const material_pointer& material, glm::mat4 const& transformation);
         void bind_buffers();
+
+        const material_pointer& default_material() const;
 
     private:
         void prepare();
@@ -61,6 +74,8 @@ namespace myrt
             glm::mat4 transformation;
             glm::mat4 inverse_transformation;
             geometry_info_t geometry_info;
+            int material_index;
+            int pad[3];
         };
         struct aligned_point_t
         {
@@ -76,6 +91,7 @@ namespace myrt
             GLuint bvh_nodes_buffer = 0;
             GLuint bvh_indices_buffer = 0;
             GLuint drawable_buffer = 0;
+            GLuint materials_buffer = 0;
 
             GLuint global_bvh_nodes_buffer = 0;
             GLuint global_bvh_indices_buffer = 0;
@@ -90,12 +106,17 @@ namespace myrt
         std::vector<aabb_t> m_drawable_aabbs;
         std::vector<geometry_pointer> m_available_geometries;
         std::vector<geometry_pointer> m_erase_on_prepare;
+        std::vector<material_info_t> m_material_infos;
+        std::vector<material_pointer> m_available_materials;
+        material_pointer m_default_material;
+        bool m_materials_changed = false;
         bool m_geometries_changed = false;
     };
 
     struct geometric_object
     {
         scene::geometry_pointer geometry;
+        scene::material_pointer material;
         glm::mat4 transformation;
 
         void enqueue() const;
