@@ -51,7 +51,8 @@ void main()
     vec2 off = rand_offset2d(1.0f, vec2(0, 1), vec2(1, 0));
 
     vec2 tsize = vec2(textureSize(u_last_image, 0));
-    vec3 in_ray_direction = (u_inv_view * u_inv_proj*vec4(((off + gl_FragCoord.xy) / tsize)*2-1, 1, 1)).xyz;
+    vec4 ird = (u_inv_view * u_inv_proj*vec4(((off + gl_FragCoord.xy) / tsize)*2-1, 1, 1));
+    vec3 in_ray_direction = normalize(ird.xyz);
 
     vec3 rc = in_ray_origin + u_focus * in_ray_direction;
 

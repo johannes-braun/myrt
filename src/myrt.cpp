@@ -16,7 +16,6 @@
 #include <SFML/Graphics/Texture.hpp>
 #include <SFML/Window.hpp>
 #include <glad/glad.h>
-#include <glm/ext.hpp>
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 #include <imgui.h>
@@ -72,16 +71,16 @@ int main(int argc, char** argv)
 
         myrt::scene scene;
         auto teapot = scene.push_geometry(teapot_low::indices,
-            { (glm::vec3*)teapot_low::vertices, teapot_low::num_points },
-            { (glm::vec3*)teapot_low::normals, teapot_low::num_points });
+            { (rnu::vec3*)teapot_low::vertices, teapot_low::num_points },
+            { (rnu::vec3*)teapot_low::normals, teapot_low::num_points });
         auto cube = scene.push_geometry(cube::indices,
-            { (glm::vec3*)cube::vertices, cube::num_points },
-            { (glm::vec3*)cube::normals, cube::num_points });
+            { (rnu::vec3*)cube::vertices, cube::num_points },
+            { (rnu::vec3*)cube::normals, cube::num_points });
 
         std::vector<myrt::geometric_object> objects;
         std::minstd_rand rng(1);
         const auto rcol = [&] {
-            return glm::u8vec4(255*rng(), 255*rng(), 255*rng(), 255);
+            return rnu::vec4ui8(255 * rng(), 255 * rng(), 255 * rng(), 255);
         };
 
         for (int i = -2; i < 3; ++i)
@@ -93,9 +92,11 @@ int main(int argc, char** argv)
                     .albedo_rgba = rcol(),
                     .ior = 1.2f
                     });
-                obj.transformation = glm::translate(glm::mat4(1.0), 2.2f * glm::vec3(i, 0.1 * i, j))
-                    * glm::rotate(glm::mat4(1.0f), glm::radians(float(rng())), normalize(glm::vec3(glm::uvec3(rng(), rng(), rng() + 1))))
-                    * glm::scale(glm::mat4(1.0), glm::vec3(1, 0.5f + 1.f * (rng() / float(rng.max())), 1));
+
+                auto const tl = rnu::translation(2.2f * rnu::vec3(i, 0.1 * i, j));
+                auto const ro = rnu::rotation(rnu::quat(rnu::radians(float(rng())), normalize(rnu::vec3(rnu::vec3ui(rng(), rng(), rng() + 1)))));
+                auto const sc = rnu::scale(rnu::vec3(1, 0.5f + 1.f * (rng() / float(rng.max())), 1));
+                obj.transformation = tl * ro * sc;
             }
 
         auto [cubemap, cube_sampler] = load_cubemap();
@@ -109,8 +110,6 @@ int main(int argc, char** argv)
         ImGui::GetIO().Fonts->AddFontFromFileTTF((res_dir / "alata.ttf").string().c_str(), 20);
         ImGui::SFML::UpdateFontTexture();
 
-        auto view = glm::lookAt(glm::vec3(5, 5.5, 4.5), glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
-
         GLuint bokeh{};
         glCreateTextures(GL_TEXTURE_2D, 1, &bokeh);
         int bw{}, bh{}, bc{};
@@ -120,27 +119,60 @@ int main(int argc, char** argv)
         stbi_image_free(img_data);
 
         myrt::pathtracer pathtracer;
-        rnu::camera<float> camera({ 0.0f, 0.0f, -15.f });
+        rnu::camera<float> camera(rnu::vec3{ 0.0f, 0.0f, -15.f });
 
         sf::Clock delta_time;
         float time = 0.0;
+        bool picked = false;
+        std::optional<myrt::scene::hit> hpicked = std::nullopt;
         while (!close)
         {
             sf::Time delta = delta_time.restart();
             time += delta.asSeconds();
             ImGui::SFML::Update(window, delta);
 
-            if (animate)
+            if (animate || hpicked)
             {
+                int i = 0;
                 for (auto& obj : objects)
                 {
-                    obj.transformation = obj.transformation * glm::rotate(glm::mat4(1.0), delta.asSeconds(), glm::vec3(0, 1, 0));
+                    obj.transformation = obj.transformation * rnu::rotation(rnu::quat{ delta.asSeconds(), rnu::vec3(0, 1, 0) });
+
+                    if (hpicked && hpicked.value().index == i)
+                    {
+                        obj.material = scene.push_material({
+                            .albedo_rgba = rnu::vec4ui8{255, 255, 255, 255},
+                            .ior = 0.0f
+                            });
+                        hpicked = std::nullopt;
+                    }
+
                     obj.enqueue();
+                    i++;
                 }
                 pathtracer.invalidate_counter();
             }
-            auto proj = glm::perspectiveFov(glm::radians(60.f), float(window.getSize().x), float(window.getSize().y), 0.01f, 1000.f);
+            auto view = camera.matrix(true);
+            auto proj = camera.projection(rnu::radians(60.f), float(window.getSize().x) / float(window.getSize().y), 0.01f, 1000.f, true);
 
+            if (!picked && sf::Mouse::isButtonPressed(sf::Mouse::Right))
+            {
+                myrt::ray_t ray;
+                ray.length = std::numeric_limits<float>::infinity();
+                auto const mp = sf::Mouse::getPosition(window);
+                const auto vv =
+                    rnu::vec4(float(mp.x) / window.getSize().x * 2 - 1, float(window.getSize().y - 1 - mp.y) / window.getSize().y * 2 - 1, 1, 1);
+                const auto ax = inverse(view) * inverse(proj) * vv;
+                ray.direction = normalize(rnu::vec3(ax.x, ax.y, ax.z));
+                ray.origin = -camera.position();
+
+                picked = true;
+                hpicked = scene.pick(ray);
+            }
+            else if (picked && !sf::Mouse::isButtonPressed(sf::Mouse::Right))
+            {
+                picked = false;
+            }
             
             if (window.hasFocus() && !ImGui::GetIO().WantCaptureKeyboard) {
                 camera.axis(delta.asSeconds() * (1.f + 5 * sf::Keyboard::isKeyPressed(sf::Keyboard::LShift)),
@@ -158,7 +190,7 @@ int main(int argc, char** argv)
                     sf::Mouse::isButtonPressed(sf::Mouse::Left));
             }
 
-            pathtracer.set_view(glm::make_mat4(camera.matrix(true).data()));
+            pathtracer.set_view(view);
             pathtracer.set_projection(proj);
             pathtracer.set_focus(focus);
             for(int i = samples_per_iteration; i--;)

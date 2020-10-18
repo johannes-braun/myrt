@@ -4,7 +4,6 @@
 #include <random>
 #include <optional>
 #include <glad/glad.h>
-#include <glm/glm.hpp>
 #include "texture_provider.hpp"
 #include "scene.hpp"
 
@@ -20,8 +19,8 @@ namespace myrt
         void sample_to_framebuffer(scene& scene, GLuint target_framebuffer, GLenum attachment);
         void sample_to_display(scene& scene, int width, int height);
         
-        void set_projection(glm::mat4 matrix);
-        void set_view(glm::mat4 matrix);
+        void set_projection(rnu::mat4 matrix);
+        void set_view(rnu::mat4 matrix);
         void set_cubemap(GLuint cubemap, GLuint sampler);
         void set_lens_radius(float radius);
         void set_bokeh(GLuint bokeh);
@@ -58,8 +57,8 @@ namespace myrt
         std::shared_ptr<texture_t> m_current_sample_texture;
         std::shared_ptr<texture_t> m_random_texture;
 
-        glm::mat4 m_view_matrix;
-        glm::mat4 m_projection_matrix;
+        rnu::mat4 m_view_matrix;
+        rnu::mat4 m_projection_matrix;
 
         std::mt19937 m_random_engine;
     };

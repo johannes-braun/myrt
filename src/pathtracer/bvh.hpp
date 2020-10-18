@@ -1,6 +1,6 @@
 #pragma once
 
-#include <glm/glm.hpp>
+#include <rnu/math/math.hpp>
 #include <array>
 #include <cstddef>
 #include <cinttypes>
@@ -26,7 +26,7 @@ namespace myrt
 			constexpr char const bvh_point_type[] = "vec3";
 		}
 
-		using default_point_type = glm::vec3;
+		using default_point_type = rnu::vec3;
 		using default_index_type = std::uint32_t;
 		constexpr size_t bvh_node_alignment = sizeof(float) * 4;
 	}
@@ -57,12 +57,12 @@ namespace myrt
 		}
 
 		constexpr void enclose(point_type point) noexcept {
-			min = glm::min(min, point);
-			max = glm::max(max, point);
+			min = rnu::min(min, point);
+			max = rnu::max(max, point);
 		}
 		constexpr void enclose(aabb_t aabb) noexcept {
-			min = glm::min(min, aabb.min);
-			max = glm::max(max, aabb.max);
+			min = rnu::min(min, aabb.min);
+			max = rnu::max(max, aabb.max);
 		}
 		constexpr void pad(float padding) noexcept {
 			min -= padding;
@@ -72,10 +72,11 @@ namespace myrt
 
 	struct ray_t
 	{
-		glm::vec3 origin;
-		glm::vec3 direction;
+		rnu::vec3 origin;
+		rnu::vec3 direction;
 		float length;
 
+		[[nodiscard]] std::optional<float> intersect(const rnu::vec3 v1, const rnu::vec3 v2, const rnu::vec3 v3, rnu::vec2& barycentric);
 		[[nodiscard]] std::optional<float> intersect(aabb_t const& aabb) const noexcept;
 	};
 

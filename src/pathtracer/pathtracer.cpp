@@ -2,7 +2,6 @@
 #include "bvh.hpp"
 #include <sstream>
 #include "utils.hpp"
-#include <glm/ext.hpp>
 #include <glsp/preprocess.hpp>
 
 namespace myrt
@@ -131,8 +130,8 @@ namespace myrt
         glBindTextureUnit(1, m_random_texture->id());
         glBindTextureUnit(2, m_last_sample_texture->id());
         glBindVertexArray(m_vertex_array);
-        glUniformMatrix4fv(0, 1, false, value_ptr(inverse(m_projection_matrix)));
-        glUniformMatrix4fv(1, 1, false, value_ptr(inverse(m_view_matrix)));
+        glUniformMatrix4fv(0, 1, false, inverse(m_projection_matrix).data());
+        glUniformMatrix4fv(1, 1, false, inverse(m_view_matrix).data());
         glUniform2f(2, GLfloat(width), GLfloat(height));
         glUniform1ui(3, distribution(m_random_engine));
         glUniform1i(4, m_sample_counter++);
@@ -144,7 +143,7 @@ namespace myrt
 
         glBlitNamedFramebuffer(m_framebuffer, 0, 0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
     }
-    void pathtracer::set_projection(glm::mat4 matrix)
+    void pathtracer::set_projection(rnu::mat4 matrix)
     {
         if (detail::set_if_different(m_projection_matrix, matrix))
             invalidate_counter();
@@ -159,7 +158,7 @@ namespace myrt
         if (detail::set_if_different(m_focus, focus))
             invalidate_counter();
     }
-    void pathtracer::set_view(glm::mat4 matrix)
+    void pathtracer::set_view(rnu::mat4 matrix)
     {
         if (detail::set_if_different(m_view_matrix, matrix))
             invalidate_counter();

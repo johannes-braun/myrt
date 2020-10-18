@@ -25,8 +25,6 @@ find_package(SFML 2 COMPONENTS graphics audio main network system window REQUIRE
 target_link_libraries(myrt PUBLIC Freetype OpenAL OpenGL Vorbis sfml-audio sfml-graphics sfml-main sfml-network sfml-system sfml-window)
 find_package(glad REQUIRED)
 target_link_libraries(myrt PUBLIC glad::glad)
-find_package(glm REQUIRED)
-target_link_libraries(myrt PUBLIC glm)
 find_package(Stb REQUIRED)
 target_include_directories(myrt PUBLIC ${Stb_INCLUDE_DIR})
 find_package(imgui CONFIG REQUIRED)

@@ -28,8 +28,8 @@ namespace myrt
             for (auto index = node.first_child; index <= node.second_child; ++index)
             {
                 const auto centroid = state.aabbs[index].centroid();
-                glm::ivec3 const bin_id = glm::clamp(glm::ivec3((centroid - sub_aabb.min) / step),
-                    glm::ivec3(0), glm::ivec3(bvh::binned_sah_bin_count - 1));
+                rnu::vec3i const bin_id = rnu::clamp(rnu::vec3i((centroid - sub_aabb.min) / step),
+                    rnu::vec3i(0), rnu::vec3i(bvh::binned_sah_bin_count - 1));
                 axis_bins[0][bin_id.x].enclose(state.aabbs[index]);
                 axis_bins[1][bin_id.y].enclose(state.aabbs[index]);
                 axis_bins[2][bin_id.z].enclose(state.aabbs[index]);
@@ -261,17 +261,44 @@ namespace myrt
 
         return split_result;
     }
+    
+    std::optional<float> ray_t::intersect(const rnu::vec3 v1, const rnu::vec3 v2, const rnu::vec3 v3, rnu::vec2& barycentric)
+    {
+        constexpr float float_epsilon = 1e-23f;
+        constexpr float border_epsilon = 1e-6f;
+        rnu::vec3 e1 = v2 - v1;
+        rnu::vec3 e2 = v3 - v1;
+        rnu::vec3 P = cross(rnu::vec3(direction), e2);
+        float det = dot(e1, P);
+        if (det > -float_epsilon && det < float_epsilon)
+            return false;
+        float inv_det = 1.0f / det;
+        rnu::vec3 T = origin - v1;
+        barycentric.x = dot(T, P) * inv_det;
+        if (barycentric.x < -border_epsilon || barycentric.x > 1.0f + border_epsilon)
+            return false;
+        rnu::vec3 Q = cross(T, e1);
+        barycentric.y = dot(rnu::vec3(direction), Q) * inv_det;
+        if (barycentric.y < -border_epsilon || barycentric.x + barycentric.y > 1.0f + border_epsilon)
+            return false;
+        float tt = dot(e2, Q) * inv_det;
+        if (tt > float_epsilon) {
+            return tt;
+        }
+        return std::nullopt;
+    }
+
     std::optional<float> ray_t::intersect(aabb_t const& aabb) const noexcept
     {
-        glm::vec3 inv_direction = 1.f / direction;
-        glm::vec3 t135 = (aabb.min - origin) * inv_direction;
-        glm::vec3 t246 = (aabb.max - origin) * inv_direction;
+        rnu::vec3 inv_direction = 1.f / direction;
+        rnu::vec3 t135 = (aabb.min - origin) * inv_direction;
+        rnu::vec3 t246 = (aabb.max - origin) * inv_direction;
 
-        glm::vec3 min_values = min(t135, t246);
-        glm::vec3 max_values = max(t135, t246);
+        rnu::vec3 min_values = min(t135, t246);
+        rnu::vec3 max_values = max(t135, t246);
 
-        float tmin = glm::max(glm::max(min_values.x, min_values.y), min_values.z);
-        float tmax = glm::min(glm::min(max_values.x, max_values.y), max_values.z);
+        float tmin = rnu::max(rnu::max(min_values.x, min_values.y), min_values.z);
+        float tmax = rnu::min(rnu::min(max_values.x, max_values.y), max_values.z);
 
         return (tmax >= 0 && tmin <= tmax && tmin <= length) ? std::optional(tmin < 0 ? tmax : tmin) : std::nullopt;
     }

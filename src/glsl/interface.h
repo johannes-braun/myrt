@@ -10,7 +10,8 @@ struct drawable_geometry_t
     uint points_base_index;
 
     int material_index;
-    int pad[3];
+    int geometry_index;
+    int pad[2];
 };
 
 struct material_info_t

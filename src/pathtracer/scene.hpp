@@ -1,13 +1,13 @@
 #pragma once
 
 #include "bvh.hpp"
-#include <glm/glm.hpp>
 #include <span>
 #include <optional>
 #include <stdexcept>
 #include <vector>
 #include <unordered_set>
 #include <glad/glad.h>
+#include <experimental/generator>
 
 namespace myrt
 {
@@ -23,7 +23,7 @@ namespace myrt
 
     struct material_info_t
     {
-        glm::u8vec4 albedo_rgba;
+        rnu::vec4ui8 albedo_rgba;
         float ior;
     };
 
@@ -61,21 +61,29 @@ namespace myrt
 
         void erase_geometry_direct(const geometry_pointer& geometry);
         void erase_geometry_indirect(const geometry_pointer& geometry);
-        void enqueue(geometry_t const* geometry, material_t const* material, glm::mat4 const& transformation);
-        void enqueue(const geometry_pointer& geometry, const material_pointer& material, glm::mat4 const& transformation);
+        void enqueue(geometry_t const* geometry, material_t const* material, rnu::mat4 const& transformation);
+        void enqueue(const geometry_pointer& geometry, const material_pointer& material, rnu::mat4 const& transformation);
         void bind_buffers();
+
+        struct hit {
+            size_t index;
+            float t;
+        };
+        std::optional<hit> pick(ray_t ray);
 
         const material_pointer& default_material() const;
 
     private:
+        void prepare_bvh();
         void prepare();
         struct drawable_geometry_t
         {
-            glm::mat4 transformation;
-            glm::mat4 inverse_transformation;
+            rnu::mat4 transformation;
+            rnu::mat4 inverse_transformation;
             geometry_info_t geometry_info;
             int material_index;
-            int pad[3];
+            int geometry_index;
+            int pad[2];
         };
         struct aligned_point_t
         {
@@ -108,6 +116,8 @@ namespace myrt
         std::vector<geometry_pointer> m_erase_on_prepare;
         std::vector<material_info_t> m_material_infos;
         std::vector<material_pointer> m_available_materials;
+        std::vector<std::unique_ptr<bvh>> m_object_bvhs;
+        std::unique_ptr<bvh> m_global_bvh;
         material_pointer m_default_material;
         bool m_materials_changed = false;
         bool m_geometries_changed = false;
@@ -117,7 +127,7 @@ namespace myrt
     {
         scene::geometry_pointer geometry;
         scene::material_pointer material;
-        glm::mat4 transformation;
+        rnu::mat4 transformation;
 
         void enqueue() const;
     };
