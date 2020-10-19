@@ -5,6 +5,7 @@
 #include "pathtracer/scene.hpp"
 #include "cube.hpp"
 #include "teapot_low.h"
+#include "bunny.h"
 #include <imgui-SFML.h>
 
 #include <iostream>
@@ -70,9 +71,9 @@ int main(int argc, char** argv)
         glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
 
         myrt::scene scene;
-        auto teapot = scene.push_geometry(teapot_low::indices,
-            { (rnu::vec3*)teapot_low::vertices, teapot_low::num_points },
-            { (rnu::vec3*)teapot_low::normals, teapot_low::num_points });
+        auto teapot = scene.push_geometry(bunny::indices,
+            { (rnu::vec3*)bunny::vertices, bunny::num_points },
+            { (rnu::vec3*)bunny::normals, bunny::num_points });
         auto cube = scene.push_geometry(cube::indices,
             { (rnu::vec3*)cube::vertices, cube::num_points },
             { (rnu::vec3*)cube::normals, cube::num_points });
@@ -87,7 +88,7 @@ int main(int argc, char** argv)
             for (int j = -2; j < 3; ++j)
             {
                 auto& obj = objects.emplace_back();
-                obj.geometry = (cube && (i + (j % 2)) % 2 == 0) ? teapot : teapot;
+                obj.geometry = (cube && (i + (j % 2)) % 2 == 0) ? teapot : cube;
                 obj.material = scene.push_material({
                     .albedo_rgba = rcol(),
                     .ior = 1.2f
@@ -125,32 +126,36 @@ int main(int argc, char** argv)
         float time = 0.0;
         bool picked = false;
         std::optional<myrt::scene::hit> hpicked = std::nullopt;
+
+        const auto glow_material = scene.push_material({
+            .albedo_rgba = rnu::vec4ui8{255, 255, 255, 255},
+            .ior = 1.2f,
+            .brightness = 8.0f });;
+
         while (!close)
         {
             sf::Time delta = delta_time.restart();
             time += delta.asSeconds();
             ImGui::SFML::Update(window, delta);
 
-            if (animate || hpicked)
+            if (animate)
             {
-                int i = 0;
                 for (auto& obj : objects)
                 {
                     obj.transformation = obj.transformation * rnu::rotation(rnu::quat{ delta.asSeconds(), rnu::vec3(0, 1, 0) });
-
-                    if (hpicked && hpicked.value().index == i)
-                    {
-                        obj.material = scene.push_material({
-                            .albedo_rgba = rnu::vec4ui8{255, 255, 255, 255},
-                            .ior = 0.0f
-                            });
-                        hpicked = std::nullopt;
-                    }
-
-                    obj.enqueue();
-                    i++;
                 }
-                pathtracer.invalidate_counter();
+            }
+
+            int i = 0;
+            for (auto& obj : objects)
+            {
+                obj.enqueue();
+                if (hpicked && hpicked.value().index == i)
+                {
+                    obj.material = glow_material;
+                    hpicked = std::nullopt;
+                }
+                i++;
             }
             auto view = camera.matrix(true);
             auto proj = camera.projection(rnu::radians(60.f), float(window.getSize().x) / float(window.getSize().y), 0.01f, 1000.f, true);
@@ -173,7 +178,7 @@ int main(int argc, char** argv)
             {
                 picked = false;
             }
-            
+
             if (window.hasFocus() && !ImGui::GetIO().WantCaptureKeyboard) {
                 camera.axis(delta.asSeconds() * (1.f + 5 * sf::Keyboard::isKeyPressed(sf::Keyboard::LShift)),
                     sf::Keyboard::isKeyPressed(sf::Keyboard::W),
@@ -193,7 +198,7 @@ int main(int argc, char** argv)
             pathtracer.set_view(view);
             pathtracer.set_projection(proj);
             pathtracer.set_focus(focus);
-            for(int i = samples_per_iteration; i--;)
+            for (int i = samples_per_iteration; i--;)
                 pathtracer.sample_to_display(scene, window.getSize().x, window.getSize().y);
 
             ImGui::Begin("Settings");
@@ -205,7 +210,6 @@ int main(int argc, char** argv)
                 scene.erase_geometry_direct(cube);
                 objects.erase(std::remove_if(objects.begin(), objects.end(), [&](const auto& obj) { return obj.geometry == cube; }), objects.end());
                 cube.reset();
-                pathtracer.invalidate_counter();
             }
             if (ImGui::Checkbox("Enable Cubemap", &cubemap_enabled))
             {

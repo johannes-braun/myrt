@@ -77,14 +77,14 @@ namespace myrt
         if (!m_is_initialized)
             initialize();
 
-        scene.bind_buffers();
+        const bool scene_has_changed = scene.prepare_and_bind();
         if (!m_program)
             return;
 
         m_texture_provider.new_frame();
         repopulate_random_texture();
 
-        if (detail::set_if_different(m_last_scene, &scene))
+        if (detail::set_if_different(m_last_scene, &scene) || scene_has_changed)
             invalidate_counter();
         if (detail::set_if_different(m_last_width, width) ||
             detail::set_if_different(m_last_height, height))

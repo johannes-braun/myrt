@@ -124,6 +124,11 @@ void main()
         material_info_t material = materials[geometries[hit_geometry].material_index];
 
         vec3 albedo_color = albedo(material).rgb;
+        if(dot(albedo_color, albedo_color) > 3.0)
+        {
+            path_color = albedo_color * path_reflectance;
+            break;
+        }
 
         float probability = 1;
         float r0 = (1 - material.ior) / (1 + material.ior);

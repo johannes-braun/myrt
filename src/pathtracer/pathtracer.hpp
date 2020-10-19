@@ -13,7 +13,7 @@ namespace myrt
     {
     public:
         constexpr static auto max_uniform_distribution_value = 0x0ffffffu;
-        constexpr static auto random_number_count = 4096;
+        constexpr static auto random_number_count = 1<<15;
 
         ~pathtracer();
         void sample_to_framebuffer(scene& scene, GLuint target_framebuffer, GLenum attachment);

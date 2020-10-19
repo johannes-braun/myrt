@@ -23,8 +23,10 @@ namespace myrt
 
     struct material_info_t
     {
-        rnu::vec4ui8 albedo_rgba;
-        float ior;
+        rnu::vec4ui8 albedo_rgba = rnu::vec4ui8(255, 255, 255, 255);
+        rnu::vec4ui8 alt_color_rgba = rnu::vec4ui8(255, 255, 255, 255);
+        float ior = 1.0f;
+        float brightness = 1.0f;
     };
 
     struct geometry_t;
@@ -63,7 +65,7 @@ namespace myrt
         void erase_geometry_indirect(const geometry_pointer& geometry);
         void enqueue(geometry_t const* geometry, material_t const* material, rnu::mat4 const& transformation);
         void enqueue(const geometry_pointer& geometry, const material_pointer& material, rnu::mat4 const& transformation);
-        void bind_buffers();
+        bool prepare_and_bind();
 
         struct hit {
             size_t index;
@@ -74,8 +76,7 @@ namespace myrt
         const material_pointer& default_material() const;
 
     private:
-        void prepare_bvh();
-        void prepare();
+        bool prepare();
         struct drawable_geometry_t
         {
             rnu::mat4 transformation;
@@ -104,6 +105,9 @@ namespace myrt
             GLuint global_bvh_nodes_buffer = 0;
             GLuint global_bvh_indices_buffer = 0;
         } m_gl_objects;
+
+        size_t m_last_drawable_hash = 0;
+        size_t m_current_drawable_hash = ~0;
 
         std::vector<index_type> m_indices;
         std::vector<aligned_point_t> m_vertices;

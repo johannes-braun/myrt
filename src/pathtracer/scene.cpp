@@ -146,6 +146,21 @@ namespace myrt
         if (geometry)
             enqueue(geometry.get(), material.get(), transformation);
     }
+
+    [[nodiscard]] size_t hash(geometry_t const* geometry, material_t const* material, rnu::mat4 const& transformation) noexcept
+    {
+        size_t const geom_hash = std::hash<decltype(geometry)>()(geometry);
+        size_t const mat_hash = std::hash<decltype(material)>()(material);
+        size_t tf_hash = 0;
+        for (size_t c = 0; c < transformation.cols; ++c)
+        {
+            for (size_t r = 0; r < transformation.rows; ++r) {
+                tf_hash ^= std::hash<float>()(transformation.at(c, r));
+            }
+        }
+        return geom_hash ^ mat_hash ^ tf_hash;
+    }
+
     void scene::enqueue(geometry_t const* geometry, material_t const* material, rnu::mat4 const& transformation)
     {
         m_drawables.push_back(drawable_geometry_t{
@@ -155,6 +170,8 @@ namespace myrt
             .material_index = material ? material->index : 0,
             .geometry_index = geometry->index
             });
+
+        m_current_drawable_hash ^= hash(geometry, material, transformation);
 
         aabb_t transformed;
         for (unsigned i = 0; i < 8; ++i)
@@ -192,9 +209,9 @@ namespace myrt
             for (const auto& triangle_index : m_object_bvhs[m_drawables[drawable_index].geometry_index]->traverse(transformed))
             {
                 rnu::vec2 barycentric;
-                auto const& v0 = m_vertices[m_indices[gi.indices_base_index * 3] + gi.points_base_index].value;
-                auto const& v1 = m_vertices[m_indices[gi.indices_base_index * 3 + 1] + gi.points_base_index].value;
-                auto const& v2 = m_vertices[m_indices[gi.indices_base_index * 3 + 2] + gi.points_base_index].value;
+                auto const& v0 = m_vertices[m_indices[gi.indices_base_index] + gi.points_base_index].value;
+                auto const& v1 = m_vertices[m_indices[gi.indices_base_index + 1] + gi.points_base_index].value;
+                auto const& v2 = m_vertices[m_indices[gi.indices_base_index + 2] + gi.points_base_index].value;
                 const auto intersect_triangle = transformed.intersect(v0, v1, v2, barycentric);
                 
                 if (intersect_triangle && (!h || *intersect_triangle > h->t))
@@ -209,23 +226,28 @@ namespace myrt
         return h;
     }
 
-    void scene::prepare() {
+    bool scene::prepare() {
+        bool has_changed = false;
         const auto fill_buffer = [this](auto buffer, auto const& vector) {
             glNamedBufferData(buffer, detail::vector_bytes(vector), vector.data(), GL_DYNAMIC_DRAW);
         };
-        if (!m_drawables.empty())
+        if (!m_drawables.empty() && (m_current_drawable_hash != m_last_drawable_hash))
         {
+            m_last_drawable_hash = m_current_drawable_hash;
             m_global_bvh = std::make_unique<bvh>(m_drawable_aabbs);
             fill_buffer(m_gl_objects.global_bvh_nodes_buffer, m_global_bvh->nodes());
             fill_buffer(m_gl_objects.global_bvh_indices_buffer, m_global_bvh->reordered_indices());
             glNamedBufferData(m_gl_objects.drawable_buffer, detail::vector_bytes(m_drawables), m_drawables.data(), GL_DYNAMIC_DRAW);
-            m_drawables.clear();
-            m_drawable_aabbs.clear();
+            has_changed = true;
         }
+        m_drawables.clear();
+        m_drawable_aabbs.clear();
+        m_current_drawable_hash = 0;
         if (m_materials_changed)
         {
             m_materials_changed = false;
             fill_buffer(m_gl_objects.materials_buffer, m_material_infos);
+            has_changed = true;
         }
         if (m_geometries_changed)
         {
@@ -235,13 +257,18 @@ namespace myrt
             fill_buffer(m_gl_objects.normals_buffer, m_normals);
             fill_buffer(m_gl_objects.bvh_nodes_buffer, m_bvh_nodes);
             fill_buffer(m_gl_objects.bvh_indices_buffer, m_bvh_indices);
+            has_changed = true;
         }
         for (auto& to_erase : m_erase_on_prepare)
+        {
             erase_geometry_direct(to_erase);
+            has_changed = true;
+        }
+        return has_changed;
     }
 
-    void scene::bind_buffers() {
-        prepare();
+    bool scene::prepare_and_bind() {
+        const bool has_changed = prepare();
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, buffer_binding_bvh_nodes, m_gl_objects.bvh_nodes_buffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, buffer_binding_bvh_indices, m_gl_objects.bvh_indices_buffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, buffer_binding_indices, m_gl_objects.indices_buffer);
@@ -251,6 +278,7 @@ namespace myrt
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, buffer_binding_global_bvh_nodes, m_gl_objects.global_bvh_nodes_buffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, buffer_binding_global_bvh_indices, m_gl_objects.global_bvh_indices_buffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, buffer_binding_materials, m_gl_objects.materials_buffer);
+        return has_changed;
     }
 
     void geometric_object::enqueue() const

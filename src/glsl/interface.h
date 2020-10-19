@@ -17,13 +17,18 @@ struct drawable_geometry_t
 struct material_info_t
 {
     uint albedo_rgba_unorm;
+    uint alt_color_rgba;
     float ior;
+    float brightness;
 };
 vec4 albedo(material_info_t info)
 {
-    return unpackUnorm4x8(info.albedo_rgba_unorm);
+    return info.brightness * unpackUnorm4x8(info.albedo_rgba_unorm);
 }
-
+vec4 alt_color(material_info_t info)
+{
+    return unpackUnorm4x8(info.alt_color_rgba);
+}
 // BUFFERS
 layout(binding = 0, std430) restrict readonly buffer BVH { bvh_node_t bvh_nodes[]; };
 layout(binding = 1, std430) restrict readonly buffer BVHIndices { uint bvh_indices[]; };
