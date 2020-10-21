@@ -24474,7 +24474,6 @@ constexpr float vertices[BUNNY_NUM_VERTS][3] = {
     -0.0605351, 0.294479, -0.0306485,
     -0.305781, 0.256326, -0.181872,
     -0.0967461, 0.291045, -0.0472396
-
 };
 
 constexpr float normals[BUNNY_NUM_VERTS][3] = {

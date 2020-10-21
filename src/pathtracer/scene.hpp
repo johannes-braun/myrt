@@ -54,18 +54,18 @@ namespace myrt
 
         scene();
         ~scene();
-        [[nodiscard]] const geometry_pointer& push_geometry(
+        [[nodiscard]] geometry_pointer push_geometry(
             std::span<index_type const> indices,
             std::span<point_type const> points,
             std::span<point_type const> normals
         );
-        [[nodiscard]] const material_pointer& push_material(material_info_t info);
+        [[nodiscard]] material_pointer push_material(material_info_t info);
 
-        void erase_geometry_direct(const geometry_pointer& geometry);
-        void erase_geometry_indirect(const geometry_pointer& geometry);
         void enqueue(geometry_t const* geometry, material_t const* material, rnu::mat4 const& transformation);
         void enqueue(const geometry_pointer& geometry, const material_pointer& material, rnu::mat4 const& transformation);
         bool prepare_and_bind();
+
+        [[nodiscard]] material_info_t info_of(material_pointer const& material) const;
 
         struct hit {
             size_t index;
@@ -76,6 +76,11 @@ namespace myrt
         const material_pointer& default_material() const;
 
     private:
+        void erase_geometry_direct(const geometry_pointer& geometry);
+        void erase_geometry_indirect(const geometry_pointer& geometry);
+        void erase_material_direct(const material_pointer& material);
+        void erase_material_indirect(const material_pointer& material);
+
         bool prepare();
         struct drawable_geometry_t
         {
@@ -109,18 +114,22 @@ namespace myrt
         size_t m_last_drawable_hash = 0;
         size_t m_current_drawable_hash = ~0;
 
+        std::vector<drawable_geometry_t> m_drawables;
+        std::vector<aabb_t> m_drawable_aabbs;
+         
+        std::vector<geometry_pointer> m_available_geometries;
+        std::vector<material_pointer> m_available_materials;
+        std::vector<std::unique_ptr<bvh>> m_object_bvhs;
+        std::vector<geometry_pointer> m_erase_on_prepare;
+        std::vector<material_pointer> m_erase_on_prepare_materials;
+
         std::vector<index_type> m_indices;
         std::vector<aligned_point_t> m_vertices;
         std::vector<aligned_point_t> m_normals;
         std::vector<aligned_node_t> m_bvh_nodes;
         std::vector<index_type> m_bvh_indices;
-        std::vector<drawable_geometry_t> m_drawables;
-        std::vector<aabb_t> m_drawable_aabbs;
-        std::vector<geometry_pointer> m_available_geometries;
-        std::vector<geometry_pointer> m_erase_on_prepare;
         std::vector<material_info_t> m_material_infos;
-        std::vector<material_pointer> m_available_materials;
-        std::vector<std::unique_ptr<bvh>> m_object_bvhs;
+
         std::unique_ptr<bvh> m_global_bvh;
         material_pointer m_default_material;
         bool m_materials_changed = false;

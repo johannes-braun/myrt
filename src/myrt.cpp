@@ -69,11 +69,15 @@ int main(int argc, char** argv)
                 std::cout << '\n';
             }, nullptr);
         glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+        glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DEBUG_SEVERITY_NOTIFICATION, 0, nullptr, false);
 
         myrt::scene scene;
-        auto teapot = scene.push_geometry(bunny::indices,
+        auto bunny = scene.push_geometry(bunny::indices,
             { (rnu::vec3*)bunny::vertices, bunny::num_points },
             { (rnu::vec3*)bunny::normals, bunny::num_points });
+        auto teapot = scene.push_geometry(teapot_low::indices,
+            { (rnu::vec3*)teapot_low::vertices, teapot_low::num_points },
+            { (rnu::vec3*)teapot_low::normals, teapot_low::num_points });
         auto cube = scene.push_geometry(cube::indices,
             { (rnu::vec3*)cube::vertices, cube::num_points },
             { (rnu::vec3*)cube::normals, cube::num_points });
@@ -207,7 +211,6 @@ int main(int argc, char** argv)
                 pathtracer.invalidate_counter();
             if (ImGui::Button("Eradicate (default) Cube"))
             {
-                scene.erase_geometry_direct(cube);
                 objects.erase(std::remove_if(objects.begin(), objects.end(), [&](const auto& obj) { return obj.geometry == cube; }), objects.end());
                 cube.reset();
             }
