@@ -2,23 +2,7 @@
 
 #include "bvh.h"
 #include "interface.h"
-
-vec3 lambert_brdf(vec3 albedo, vec3 position, vec3 incoming, vec3 normal, inout vec3 outgoing, inout float pdf)
-{
-    const float pi = 3.1415926535897;
-
-    outgoing = bsdf_local_to_world(sample_cosine_hemisphere(vec2(next_random(), next_random())), normal);   
-    pdf = max(0, dot(normal, outgoing)) / pi;
-    float g_x = max(0, dot(normal, outgoing)) / pi;
-    return albedo * g_x / pdf;
-}
-
-vec3 reflect_brdf(vec3 albedo, vec3 position, vec3 incoming, vec3 normal, inout vec3 outgoing, inout float pdf)
-{
-    outgoing = reflect(incoming, normal);
-    pdf = length(albedo);
-    return albedo;
-}
+#include "brdf.h"
 
 vec3 rand_offset3d(float maximum, vec3 right, vec3 up)
 {
@@ -46,8 +30,6 @@ void main()
 
     init_random();
     
-    float jiggle = 8;
-    
     vec2 off = rand_offset2d(1.0f, vec2(0, 1), vec2(1, 0));
 
     vec2 tsize = vec2(textureSize(u_last_image, 0));
@@ -58,7 +40,7 @@ void main()
 
     vec2 bokeh_offset = rand_offset2d(0.49f, vec2(0, 1), vec2(1, 0));
     
-    const int max_bounces = 7;
+    const int max_bounces = 16;
     int bounces = max_bounces;
     vec3 path_color = vec3(0, 0, 0);
     vec3 path_reflectance = vec3(1, 1, 1);
@@ -77,6 +59,8 @@ void main()
     vec2 hit_bary = vec2(0, 0);
     uint hit_triangle = 0;
     uint hit_geometry = 0;
+
+    brdf_result_t brdf;
     while (bounces-- > 0)
     {
         if(dot(path_reflectance, path_reflectance) < 0.01 * 0.01){
@@ -89,7 +73,7 @@ void main()
         {
             if(u_has_cubemap)
             {
-                path_color = path_reflectance * pow(texture(u_cubemap, ray_direction), vec4(1 / 2.2f)).rgb;
+                path_color = path_reflectance * pow(textureLod(u_cubemap, ray_direction, 0), vec4(1 / 2.2f)).rgb;
             }
             else
             {
@@ -123,28 +107,22 @@ void main()
         
         material_info_t material = materials[geometries[hit_geometry].material_index];
 
-        vec3 albedo_color = albedo(material).rgb;
-        if(dot(albedo_color, albedo_color) > 3.0)
-        {
-            path_color = albedo_color * path_reflectance;
-            break;
-        }
+        float ior_front = is_incoming ? 1.0 : material.ior;
+        float ior_back = is_incoming ? material.ior : 1.0;
 
-        float probability = 1;
-        float r0 = (1 - material.ior) / (1 + material.ior);
-        r0 *= r0;
-        float fresnel = r0 + (1 - r0) * pow(1 - dot(normal, -ray_direction), 5);
-        if(fresnel > next_random())
-        {
-            path_reflectance *= reflect_brdf(albedo_color, ray_origin, ray_direction, normal, ray_direction, probability);
-        }
-        else
-        {
-            path_reflectance *= lambert_brdf(albedo_color, hit_point, ray_direction, normal, ray_direction, probability);
-        }
-
-        path_probability *= probability;
+        clear_result(brdf);
+        sample_brdf(albedo(material).rgb, ray_origin, ray_direction, normal, ior_front, ior_back, brdf);
         
+        if(brdf.end_path)
+        {
+            path_color = brdf.reflectance * path_reflectance;
+            break;
+        }        
+
+        ray_direction = brdf.continue_direction;
+        path_probability *= brdf.pdf;
+        path_reflectance *= brdf.reflectance;
+
         vec3 off = ray_direction * 1.5e-5f;
         vec3 next_ray_origin = hit_point + off;
         ray_origin = next_ray_origin;

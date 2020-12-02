@@ -22,6 +22,7 @@
 #include <imgui.h>
 
 #include <rnu/camera.hpp>
+#include "obj.hpp"
 
 std::experimental::generator<std::reference_wrapper<sf::Event>> co_poll(sf::Window& window)
 {
@@ -72,12 +73,6 @@ int main(int argc, char** argv)
         glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DEBUG_SEVERITY_NOTIFICATION, 0, nullptr, false);
 
         myrt::scene scene;
-        auto bunny = scene.push_geometry(bunny::indices,
-            { (rnu::vec3*)bunny::vertices, bunny::num_points },
-            { (rnu::vec3*)bunny::normals, bunny::num_points });
-        auto teapot = scene.push_geometry(teapot_low::indices,
-            { (rnu::vec3*)teapot_low::vertices, teapot_low::num_points },
-            { (rnu::vec3*)teapot_low::normals, teapot_low::num_points });
         auto cube = scene.push_geometry(cube::indices,
             { (rnu::vec3*)cube::vertices, cube::num_points },
             { (rnu::vec3*)cube::normals, cube::num_points });
@@ -88,21 +83,37 @@ int main(int argc, char** argv)
             return rnu::vec4ui8(255 * rng(), 255 * rng(), 255 * rng(), 255);
         };
 
-        for (int i = -2; i < 3; ++i)
-            for (int j = -2; j < 3; ++j)
+        const auto glow_material = scene.push_material({
+            .albedo_rgba = rnu::vec4ui8{255, 255, 255, 255},
+            .ior = 1.2f,
+            .brightness = 8.0f });;
+
+        auto o = myrt::obj::load_obj(res_dir / "bdy09.obj");
+        for (const auto& obj : o)
+        {
+            auto tri = myrt::obj::triangulate(obj);
+
+            for (const auto m : tri)
             {
+                auto mesh = scene.push_geometry(m.indices,
+                    { (rnu::vec3*)m.positions[0].data(), m.positions.size() },
+                    { (rnu::vec3*)m.normals[0].data(), m.positions.size() });
+
                 auto& obj = objects.emplace_back();
-                obj.geometry = (cube && (i + (j % 2)) % 2 == 0) ? teapot : cube;
+                obj.geometry = mesh;
                 obj.material = scene.push_material({
                     .albedo_rgba = rcol(),
                     .ior = 1.2f
                     });
-
-                auto const tl = rnu::translation(2.2f * rnu::vec3(i, 0.1 * i, j));
-                auto const ro = rnu::rotation(rnu::quat(rnu::radians(float(rng())), normalize(rnu::vec3(rnu::vec3ui(rng(), rng(), rng() + 1)))));
-                auto const sc = rnu::scale(rnu::vec3(1, 0.5f + 1.f * (rng() / float(rng.max())), 1));
-                obj.transformation = tl * ro * sc;
             }
+        }
+
+        {
+            auto& lightcube = objects.emplace_back();
+            lightcube.geometry = cube;
+            lightcube.material = glow_material;
+            lightcube.transformation = rnu::translation(rnu::vec3(5, 5, 5)) * rnu::scale(rnu::vec3{2, 2, 2});
+        }
 
         auto [cubemap, cube_sampler] = load_cubemap();
         bool cubemap_enabled = false;
@@ -130,11 +141,6 @@ int main(int argc, char** argv)
         float time = 0.0;
         bool picked = false;
         std::optional<myrt::scene::hit> hpicked = std::nullopt;
-
-        const auto glow_material = scene.push_material({
-            .albedo_rgba = rnu::vec4ui8{255, 255, 255, 255},
-            .ior = 1.2f,
-            .brightness = 8.0f });;
 
         while (!close)
         {
@@ -209,11 +215,6 @@ int main(int argc, char** argv)
             ImGui::Text("Samples: %d (%.00f sps)", pathtracer.sample_count(), 1.f / delta.asSeconds());
             if (ImGui::Button("Restart Sampling"))
                 pathtracer.invalidate_counter();
-            if (ImGui::Button("Eradicate (default) Cube"))
-            {
-                objects.erase(std::remove_if(objects.begin(), objects.end(), [&](const auto& obj) { return obj.geometry == cube; }), objects.end());
-                cube.reset();
-            }
             if (ImGui::Checkbox("Enable Cubemap", &cubemap_enabled))
             {
                 if (cubemap_enabled)
