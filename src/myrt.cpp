@@ -35,7 +35,6 @@ const static std::filesystem::path res_dir = "../../../res";
 
 std::pair<GLuint, GLuint> load_cubemap();
 
-
 int main(int argc, char** argv)
 {
     sf::ContextSettings settings;
@@ -43,7 +42,7 @@ int main(int argc, char** argv)
     settings.minorVersion = 6;
     settings.attributeFlags |= sf::ContextSettings::Debug;
 
-    sf::RenderWindow window(sf::VideoMode(1280, 720), "MyRT", sf::Style::Default, settings);
+    sf::RenderWindow window(sf::VideoMode(1600, 1200), "MyRT", sf::Style::Default, settings);
     window.setActive(false);
 
     std::atomic_bool close = false;
@@ -73,47 +72,37 @@ int main(int argc, char** argv)
         glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DEBUG_SEVERITY_NOTIFICATION, 0, nullptr, false);
 
         myrt::scene scene;
-        auto cube = scene.push_geometry(cube::indices,
-            { (rnu::vec3*)cube::vertices, cube::num_points },
-            { (rnu::vec3*)cube::normals, cube::num_points });
+        myrt::pathtracer pathtracer;
+        rnu::camera<float> camera(rnu::vec3{ 0.0f, 0.0f, -15.f });
 
         std::vector<myrt::geometric_object> objects;
-        std::minstd_rand rng(1);
-        const auto rcol = [&] {
-            return rnu::vec4ui8(255 * rng(), 255 * rng(), 255 * rng(), 255);
-        };
-
-        const auto glow_material = scene.push_material({
-            .albedo_rgba = rnu::vec4ui8{255, 255, 255, 255},
-            .ior = 1.2f,
-            .brightness = 8.0f });;
-
-        auto o = myrt::obj::load_obj(res_dir / "bdy09.obj");
-        for (const auto& obj : o)
-        {
-            auto tri = myrt::obj::triangulate(obj);
-
-            for (const auto m : tri)
+        const auto load_obj = [&](auto path) {
+            objects.clear();
+            auto o = myrt::obj::load_obj(path);
+            for (const auto& obj : o)
             {
-                auto mesh = scene.push_geometry(m.indices,
-                    { (rnu::vec3*)m.positions[0].data(), m.positions.size() },
-                    { (rnu::vec3*)m.normals[0].data(), m.positions.size() });
+                auto tri = myrt::obj::triangulate(obj);
 
-                auto& obj = objects.emplace_back();
-                obj.geometry = mesh;
-                obj.material = scene.push_material({
-                    .albedo_rgba = rcol(),
-                    .ior = 1.2f
-                    });
+                for (const auto m : tri)
+                {
+                    auto mesh = scene.push_geometry(m.indices,
+                        { (rnu::vec3*)m.positions[0].data(), m.positions.size() },
+                        { (rnu::vec3*)m.normals[0].data(), m.positions.size() });
+
+                    auto mat = m.material;
+
+                    auto& obj = objects.emplace_back();
+                    obj.geometry = mesh;
+                    obj.material = scene.push_material({
+                        .albedo_rgba = rnu::vec4ui8(mat->diffuse[0] * 255, mat->diffuse[1] * 255, mat->diffuse[2] * 255, 255),
+                        .ior = mat->ior,
+                        .roughness = 0.1f// std::powf(1.f / mat->specularity, 1 / 3.1415926535897f)
+                        });
+                }
             }
-        }
-
-        {
-            auto& lightcube = objects.emplace_back();
-            lightcube.geometry = cube;
-            lightcube.material = glow_material;
-            lightcube.transformation = rnu::translation(rnu::vec3(5, 5, 5)) * rnu::scale(rnu::vec3{2, 2, 2});
-        }
+        };
+        const auto obj_path = res_dir / "plane.obj";
+        load_obj(obj_path);
 
         auto [cubemap, cube_sampler] = load_cubemap();
         bool cubemap_enabled = false;
@@ -121,6 +110,7 @@ int main(int argc, char** argv)
         int samples_per_iteration = 1;
         bool animate = true;
         float lens_radius = 100.0f;
+        int bounces_per_iteration = 9;
 
         ImGui::SFML::Init(window, false);
         ImGui::GetIO().Fonts->AddFontFromFileTTF((res_dir / "alata.ttf").string().c_str(), 20);
@@ -133,9 +123,6 @@ int main(int argc, char** argv)
         glTextureStorage2D(bokeh, 1, GL_RGB8, bw, bh);
         glTextureSubImage2D(bokeh, 0, 0, 0, bw, bh, GL_RGB, GL_UNSIGNED_BYTE, img_data);
         stbi_image_free(img_data);
-
-        myrt::pathtracer pathtracer;
-        rnu::camera<float> camera(rnu::vec3{ 0.0f, 0.0f, -15.f });
 
         sf::Clock delta_time;
         float time = 0.0;
@@ -162,7 +149,6 @@ int main(int argc, char** argv)
                 obj.enqueue();
                 if (hpicked && hpicked.value().index == i)
                 {
-                    obj.material = glow_material;
                     hpicked = std::nullopt;
                 }
                 i++;
@@ -213,6 +199,9 @@ int main(int argc, char** argv)
 
             ImGui::Begin("Settings");
             ImGui::Text("Samples: %d (%.00f sps)", pathtracer.sample_count(), 1.f / delta.asSeconds());
+            if (ImGui::Button("Reload obj")) {
+                load_obj(obj_path);
+            }
             if (ImGui::Button("Restart Sampling"))
                 pathtracer.invalidate_counter();
             if (ImGui::Checkbox("Enable Cubemap", &cubemap_enabled))
@@ -230,6 +219,10 @@ int main(int argc, char** argv)
                     pathtracer.set_bokeh(0);
             }
             ImGui::DragInt("Samples Per Iteration", &samples_per_iteration, 0.1f, 1, 10);
+            if (ImGui::DragInt("Bounces Per Iteration", &bounces_per_iteration, 0.1f, 1, 50))
+            {
+                pathtracer.set_max_bounces(bounces_per_iteration);
+            }
             if (ImGui::DragFloat("Lens Radius", &lens_radius, 0.1f, 0.0f, 1000.0f))
             {
                 pathtracer.set_lens_radius(lens_radius);
@@ -241,6 +234,27 @@ int main(int argc, char** argv)
             }
 
             ImGui::End();
+
+            if (ImGui::Begin("Materials")) {
+
+                for (auto& mat : scene.materials())
+                {
+                    ImGui::PushID(static_cast<const void*>(mat.get()));
+                    auto mat_info = scene.info_of(mat);
+
+                    if (ImGui::DragFloat("material.roughness", &mat_info.roughness, 0.01f, 0.02f, 1.0f))
+                        scene.update_material(mat, mat_info);
+                    if (ImGui::DragFloat("material.ior", &mat_info.ior, 0.01f, 0.01f, 100.0f))
+                        scene.update_material(mat, mat_info);
+                    if (ImGui::DragFloat("material.metallic", &mat_info.metallic, 0.01f, 0.0f, 1.0f))
+                        scene.update_material(mat, mat_info);
+                    if (ImGui::DragFloat("material.transmission", &mat_info.transmission, 0.01f, 0.0f, 1.0f))
+                        scene.update_material(mat, mat_info);
+                    ImGui::Separator();
+                }
+
+                ImGui::End();
+            }
 
             glBindVertexArray(0);
             glBindSampler(0, 0);
@@ -261,7 +275,8 @@ int main(int argc, char** argv)
                 close = true;
                 break;
             case sf::Event::MouseWheelScrolled:
-                focus += 0.2f * event.get().mouseWheelScroll.delta;
+                if(!ImGui::GetIO().WantCaptureMouse)
+                    focus += 0.2f * event.get().mouseWheelScroll.delta;
                 break;
             }
         }

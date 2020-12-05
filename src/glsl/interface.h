@@ -19,11 +19,15 @@ struct material_info_t
     uint albedo_rgba_unorm;
     uint alt_color_rgba;
     float ior;
-    float brightness;
+    float roughness;
+    float metallic;
+    float transmission;
+
+    int aaa[2];
 };
 vec4 albedo(material_info_t info)
 {
-    return info.brightness * unpackUnorm4x8(info.albedo_rgba_unorm);
+    return unpackUnorm4x8(info.albedo_rgba_unorm);
 }
 vec4 alt_color(material_info_t info)
 {
@@ -50,6 +54,7 @@ layout(location = 5) uniform bool u_has_cubemap;
 layout(location = 6) uniform float u_lens_radius;
 layout(location = 7) uniform bool u_has_bokeh;
 layout(location = 8) uniform float u_focus;
+layout(location = 9) uniform int u_max_bounces;
 
 // IMAGES
 layout(binding = 0) uniform samplerCube u_cubemap;

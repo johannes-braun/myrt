@@ -135,6 +135,7 @@ namespace myrt
         glUniform2f(2, GLfloat(width), GLfloat(height));
         glUniform1ui(3, distribution(m_random_engine));
         glUniform1i(4, m_sample_counter++);
+        glUniform1i(9, m_max_bounces);
 
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -151,6 +152,11 @@ namespace myrt
     void pathtracer::set_bokeh(GLuint bokeh)
     {
         if (detail::set_if_different(m_bokeh, bokeh))
+            invalidate_counter();
+    }
+    void pathtracer::set_max_bounces(int bounces)
+    {
+        if (detail::set_if_different(m_max_bounces, bounces))
             invalidate_counter();
     }
     void pathtracer::set_focus(float focus)

@@ -69,12 +69,17 @@ namespace myrt
             }));
 
         return std::shared_ptr<geometry_t>(ptr.get(), [this, ptr](geometry_t*) mutable {
-            erase_geometry_indirect(ptr);
+            erase_geometry_direct(ptr);
             });
     }
     material_info_t scene::info_of(material_pointer const& material) const
     {
         return m_material_infos.at(material->index);
+    }
+    void scene::update_material(material_pointer const& material, const material_info_t& info)
+    {
+        m_material_infos.at(material->index) = info;
+        m_materials_changed = true;
     }
     void scene::erase_material_indirect(const material_pointer& material) {
         m_erase_on_prepare_materials.push_back(material);
@@ -149,7 +154,7 @@ namespace myrt
         m_material_infos.push_back(std::move(info));
 
         return std::shared_ptr<material_t>(ptr.get(), [this, ptr](material_t*) mutable {
-            erase_material_indirect(ptr);
+            erase_material_direct(ptr);
             });
     }
 

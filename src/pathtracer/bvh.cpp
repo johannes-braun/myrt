@@ -81,6 +81,7 @@ namespace myrt
             aabb.enclose(p0);
             aabb.enclose(p1);
             aabb.enclose(p2);
+            aabb.pad(1e-3f);
             aabb.weighted_centroid = (p0 + p1 + p2) / 3.0f;
         }
         return aabbs;
@@ -99,6 +100,7 @@ namespace myrt
             aabb.enclose(p0);
             aabb.enclose(p1);
             aabb.enclose(p2);
+            aabb.pad(1e-3f);
             aabb.weighted_centroid = (p0 + p1 + p2) / 3.0f;
         }
         return aabbs;

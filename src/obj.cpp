@@ -6,6 +6,89 @@
 
 namespace myrt::obj
 {
+    std::unordered_map<std::string, std::shared_ptr<material_t>> load_mtllib(std::filesystem::path const& mtl_file)
+    {
+        std::unordered_map<std::string, std::shared_ptr<material_t>> result;
+        std::shared_ptr<material_t> current_material;
+
+        std::ifstream fstream(mtl_file);
+
+        for (std::string line; std::getline(fstream, line);)
+        {
+            std::stringstream line_stream(line);
+
+            while ((line_stream.peek() == ' ' || line_stream.peek() == '\t') && !line_stream.eof())
+                line_stream.ignore();
+
+            std::string identifier;
+            line_stream >> identifier;
+
+            if (identifier == "newmtl")
+            {
+                std::string name;
+                line_stream >> name;
+                current_material = result[name] = std::make_shared<material_t>();
+                current_material->name = std::move(name);
+            }
+            else if (identifier == "Ns")
+            {
+                line_stream >> current_material->specularity;
+            }
+            else if (identifier == "Ni")
+            {
+                line_stream >> current_material->ior;
+            }
+            else if (identifier == "d")
+            {
+                line_stream >> current_material->dissolve;
+            }
+            else if (identifier == "illum")
+            {
+                line_stream >> current_material->illumination_model;
+            }
+            else if (identifier == "Ka")
+            {
+                line_stream >> current_material->ambient[0];
+                line_stream >> current_material->ambient[1];
+                line_stream >> current_material->ambient[2];
+            }
+            else if (identifier == "Kd")
+            {
+                line_stream >> current_material->diffuse[0];
+                line_stream >> current_material->diffuse[1];
+                line_stream >> current_material->diffuse[2];
+            }
+            else if (identifier == "Ks")
+            {
+                line_stream >> current_material->specular[0];
+                line_stream >> current_material->specular[1];
+                line_stream >> current_material->specular[2];
+            }
+            else if (identifier == "Ke")
+            {
+                line_stream >> current_material->emissive[0];
+                line_stream >> current_material->emissive[1];
+                line_stream >> current_material->emissive[2];
+            }
+        }
+
+        return result;
+    }
+
+    std::shared_ptr<material_t> make_default_material() {
+        return std::make_shared<material_t>(material_t{
+            .name = "Default",
+            .specularity = 100,
+            .ambient = {1, 1, 1},
+            .diffuse = {1, 0, 1},
+            .specular = {1, 1, 1},
+            .emissive = {0, 0, 0},
+            .ior = 1.45,
+            .dissolve = 1.0,
+            .illumination_model = 1
+            });
+    }
+
     std::vector<object_t> load_obj(std::filesystem::path const& obj_file)
     {
         std::vector<object_t> result;
@@ -14,13 +97,45 @@ namespace myrt::obj
         size_t tex_index_offset = 1;
         size_t nor_index_offset = 1;
         std::ifstream fstream(obj_file);
+
+        std::unordered_map<std::string, std::shared_ptr<material_t>> mtllib;
+        std::shared_ptr<material_t> current_material = make_default_material();
+
+        int object_counter = 0;
+
         for (std::string line; std::getline(fstream, line);)
         {
             std::stringstream line_stream(line);
+
+            while ((line_stream.peek() == ' ' || line_stream.peek() == '\t') && !line_stream.eof())
+                line_stream.ignore();
+
             std::string identifier;
             line_stream >> identifier;
 
-            if (identifier == "o")
+            if (identifier == "mtllib")
+            {
+                mtllib.clear();
+                while (!line_stream.eof())
+                {
+                    std::string mtllib_file;
+                    line_stream >> mtllib_file;
+                    auto x = load_mtllib(obj_file.parent_path() / mtllib_file);
+                    mtllib.insert(x.begin(), x.end());
+                }
+            }
+            else if (identifier == "usemtl")
+            {
+                std::string name;
+                line_stream >> name;
+                current_material = mtllib[name];
+                if (result.back().groups.empty() || !result.back().groups.back().faces.empty())
+                {
+                    result.back().groups.emplace_back().name = name;
+                }
+                result.back().groups.back().material = current_material;
+            }
+            else if (identifier == "o")
             {
                 if (!result.empty())
                 {
@@ -34,11 +149,16 @@ namespace myrt::obj
             }
             else if (identifier == "g")
             {
-                line_stream >> result.back().groups.emplace_back().name;
+                auto& next = result.back().groups.emplace_back();
+                line_stream >> next.name;
+                next.material = current_material;
                 continue;
             }
             else if (identifier == "v")
             {
+                if (result.empty())
+                    result.emplace_back().name = "Default";
+
                 auto& arr = result.back().positions.emplace_back();
                 line_stream >> arr[0];
                 line_stream >> arr[1];
@@ -62,21 +182,40 @@ namespace myrt::obj
             }
             else if (identifier == "f")
             {
+                if (result.back().normals.empty())
+                    result.back().normals.push_back({ 0, 1, 0 });
+
+                if (result.back().groups.empty())
+                    result.back().groups.emplace_back().name = "Default";
+
                 auto& face = result.back().groups.back().faces.emplace_back();
                 line_stream.ignore();
                 for (std::string vertex; std::getline(line_stream, vertex, ' ');)
                 {
                     std::stringstream vertex_stream(vertex);
                     auto& v = face.vertices.emplace_back();
-                    vertex_stream >> v[0];
-                    vertex_stream.ignore();
-                    vertex_stream >> v[1];
-                    vertex_stream.ignore();
-                    vertex_stream >> v[2];
 
-                    v[0]-= pos_index_offset;
-                    v[1]-= tex_index_offset;
-                    v[2]-= nor_index_offset;
+                    int p = 0;
+                    int t = 0;
+                    int n = 0;
+
+                    vertex_stream >> p;
+                    vertex_stream.ignore();
+                    vertex_stream >> t;
+                    vertex_stream.ignore();
+                    vertex_stream >> n;
+
+                    if (p < 0) v[0] = result.back().positions.size() + p;
+                    else if (p != 0) v[0] = p - pos_index_offset;
+                    else v[0] = p;
+
+                    if (t < 0) v[1] = result.back().texcoords.size() + t;
+                    else if (t != 0) v[1] = t - tex_index_offset;
+                    else v[1] = t;
+
+                    if (n < 0) v[2] = result.back().normals.size() + n;
+                    else if (n != 0) v[2] = n - nor_index_offset;
+                    else v[2] = n;
                 }
             }
         }
@@ -114,13 +253,13 @@ namespace myrt::obj
 
     std::vector<triangulated_object_t> triangulate(object_t const& object)
     {
-        std::unordered_map<face_identifier, unsigned, face_hasher> face_singulator;
 
         std::vector<triangulated_object_t> result;
         for (const auto& group : object.groups)
         {
+            std::unordered_map<face_identifier, unsigned, face_hasher> face_singulator;
             auto& triangulated = result.emplace_back();
-
+            triangulated.material = group.material;
             for (const auto& face : group.faces)
             {
                 if (face.vertices.size() <= 2)

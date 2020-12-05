@@ -23,8 +23,67 @@ vec2 rand_offset2d(float maximum, vec2 right, vec2 up)
     return sqrt(rands.y) * maximum * (sin(rands.x) * right + cos(rands.x) * up);
 }
 
+struct light_t
+{
+    vec3 position;
+    float radius;
+    vec3 color;
+    vec2 attenuation;
+} test_lights[2];
+
+vec3 tonemapFilmic(vec3 x) {
+  vec3 X = max(vec3(0.0), x - 0.004);
+  vec3 result = (X * (6.2 * X + 0.5)) / (X * (6.2 * X + 1.7) + 0.06);
+  return pow(result, vec3(2.2));
+}
+
+vec3 uncharted2Tonemap(vec3 x) {
+  float A = 0.15;
+  float B = 0.50;
+  float C = 0.10;
+  float D = 0.20;
+  float E = 0.02;
+  float F = 0.30;
+  float W = 11.2;
+  return ((x * (A * x + C * B) + D * E) / (x * (A * x + B) + D * F)) - E / F;
+}
+
+vec3 uncharted2(vec3 color) {
+  const float W = 11.2;
+  float exposureBias = 2.0;
+  vec3 curr = uncharted2Tonemap(exposureBias * color);
+  vec3 whiteScale = 1.0 / uncharted2Tonemap(vec3(W));
+  return curr * whiteScale;
+}
+
+#define tonemap tonemapFilmic
+
+float raySphereIntersect(vec3 r0, vec3 rd, vec3 s0, float sr) {
+    // - r0: ray origin
+    // - rd: normalized ray direction
+    // - s0: sphere center
+    // - sr: sphere radius
+    // - Returns distance from r0 to first intersecion with sphere,
+    //   or -1.0 if no intersection.
+    float a = dot(rd, rd);
+    vec3 s0_r0 = r0 - s0;
+    float b = 2.0 * dot(rd, s0_r0);
+    float c = dot(s0_r0, s0_r0) - (sr * sr);
+    if (b*b - 4.0*a*c < 0.0) {
+        return -1.0;
+    }
+    return (-b - sqrt((b*b) - 4.0*a*c))/(2.0*a);
+}
+
 void main()
 {
+    test_lights[0].position = vec3(4, 5, 4);
+    test_lights[0].color = 100*vec3(1, 1.8, 3);
+    test_lights[0].radius = 1.3f;
+    test_lights[1].position = vec3(-4, 3, 5);
+    test_lights[1].color = 20*vec3(3, 1.8, 1);
+    test_lights[1].radius = 2.7f;
+
     vec4 last_color = texelFetch(u_last_image, ivec2(gl_FragCoord.xy), 0);
     int draw_counter = u_draw_counter;
 
@@ -40,8 +99,7 @@ void main()
 
     vec2 bokeh_offset = rand_offset2d(0.49f, vec2(0, 1), vec2(1, 0));
     
-    const int max_bounces = 16;
-    int bounces = max_bounces;
+    int bounces = u_max_bounces;
     vec3 path_color = vec3(0, 0, 0);
     vec3 path_reflectance = vec3(1, 1, 1);
     float path_probability = 1;
@@ -63,22 +121,30 @@ void main()
     brdf_result_t brdf;
     while (bounces-- > 0)
     {
-        if(dot(path_reflectance, path_reflectance) < 0.01 * 0.01){
-            break;
-        }
-
         ray_direction = normalize(ray_direction);
 
-        if (!nearest_hit(ray_origin, ray_direction, 1.0 / 0.0, hit_t, hit_bary, hit_triangle, hit_geometry))
+        bool hits_nearest = nearest_hit(ray_origin, ray_direction, 1.0 / 0.0, hit_t, hit_bary, hit_triangle, hit_geometry);
+        for(int l = 0; l < test_lights.length(); ++l)
+        {
+            float t_light = raySphereIntersect(ray_origin, ray_direction, test_lights[l].position, test_lights[l].radius);
+            if(t_light > 0 && t_light < hit_t)
+            {
+                
+                path_color += path_reflectance * test_lights[l].color;
+                break;
+            }
+        }
+
+        if (!hits_nearest)
         {
             if(u_has_cubemap)
             {
-                path_color = path_reflectance * pow(textureLod(u_cubemap, ray_direction, 0), vec4(1 / 2.2f)).rgb;
+                path_color += path_reflectance * textureLod(u_cubemap, ray_direction, 0).rgb;
             }
             else
             {
                 vec3 env = mix(vec3(0.3f, 0.4f, 0.5f), vec3(1.0f, 0.98f, 0.96f), (ray_direction.y + 1) / 2);
-                path_color = path_reflectance * env;
+                path_color += path_reflectance * env;
             }
             break;
         }
@@ -110,25 +176,51 @@ void main()
         float ior_front = is_incoming ? 1.0 : material.ior;
         float ior_back = is_incoming ? material.ior : 1.0;
 
+        vec4 brdf_randoms = vec4(next_random(), next_random(), next_random(), next_random());
+
         clear_result(brdf);
-        sample_brdf(albedo(material).rgb, ray_origin, ray_direction, normal, ior_front, ior_back, brdf);
+        sample_brdf(true, brdf_randoms, material, hit_point, ray_direction, normal, ior_front, ior_back, brdf);
         
-        if(brdf.end_path)
+        if(brdf.end_path || brdf.pdf < 1e-3)
         {
-            path_color = brdf.reflectance * path_reflectance;
+            path_color += brdf.reflectance * path_reflectance;
             break;
-        }        
+        }     
+
+        float light_random = next_random();
+
+        path_probability *= brdf.pdf;
+        path_reflectance *= brdf.reflectance * abs(dot(brdf.continue_direction, normal)) / brdf.pdf;
+
+        // Make light test
+        int light_index = clamp(int(test_lights.length() * next_random()), 0, test_lights.length());
+        {
+            vec3 point_on_light = test_lights[light_index].position + normalize(vec3(next_random(), next_random(), next_random())) * test_lights[light_index].radius * sqrt(next_random());
+
+            vec3 path_to_light = point_on_light - hit_point;
+            vec3 direction_to_light = normalize(path_to_light);
+            float distance_to_light = length(path_to_light);
+    
+            brdf_result_t light_test;
+            clear_result(light_test);
+            light_test.continue_direction = direction_to_light;
+            sample_brdf(false, brdf_randoms, material, hit_point, ray_direction, normal, ior_front, ior_back, light_test);
+
+            if(!any_hit(hit_point + normal * 1.5e-3f, direction_to_light, length(path_to_light)))
+            {
+                path_color += path_reflectance * light_test.reflectance * test_lights[light_index].color * test_lights.length() * max(0, dot(direction_to_light, normal)) / (distance_to_light);
+            }
+        }   
 
         ray_direction = brdf.continue_direction;
-        path_probability *= brdf.pdf;
-        path_reflectance *= brdf.reflectance;
 
         vec3 off = ray_direction * 1.5e-5f;
         vec3 next_ray_origin = hit_point + off;
         ray_origin = next_ray_origin;
     }
 
-    path_color = clamp(path_color, 0.0f, 8.0f);
+    path_color = tonemap(path_color);
+
     if(draw_counter > 0)
     {
         out_color = mix(last_color, vec4(path_color, 1), 1.0f / (draw_counter + 1));

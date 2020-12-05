@@ -25,6 +25,7 @@ namespace myrt
         void set_lens_radius(float radius);
         void set_bokeh(GLuint bokeh);
         void set_focus(float focus);
+        void set_max_bounces(int bounces);
         void reload_shaders();
 
         void invalidate_texture();
@@ -52,6 +53,7 @@ namespace myrt
         float m_last_width = 0;
         float m_last_height = 0;
         float m_focus = 5.0f;
+        int m_max_bounces = 8;
         scene const* m_last_scene = nullptr;
         std::shared_ptr<texture_t> m_last_sample_texture;
         std::shared_ptr<texture_t> m_current_sample_texture;

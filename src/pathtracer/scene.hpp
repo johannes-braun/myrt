@@ -26,7 +26,11 @@ namespace myrt
         rnu::vec4ui8 albedo_rgba = rnu::vec4ui8(255, 255, 255, 255);
         rnu::vec4ui8 alt_color_rgba = rnu::vec4ui8(255, 255, 255, 255);
         float ior = 1.0f;
-        float brightness = 1.0f;
+        float roughness = 1.0f;
+        float metallic = 0.0f;
+        float transmission = 0.0f;
+
+        int aaa[2];
     };
 
     struct geometry_t;
@@ -66,6 +70,7 @@ namespace myrt
         bool prepare_and_bind();
 
         [[nodiscard]] material_info_t info_of(material_pointer const& material) const;
+        void update_material(material_pointer const& material, const material_info_t& info);
 
         struct hit {
             size_t index;
@@ -74,6 +79,8 @@ namespace myrt
         std::optional<hit> pick(ray_t ray);
 
         const material_pointer& default_material() const;
+
+        [[nodiscard]] decltype(auto) materials() const noexcept { return m_available_materials; }
 
     private:
         void erase_geometry_direct(const geometry_pointer& geometry);
