@@ -3,6 +3,7 @@
 #include <string>
 #include <random>
 #include <optional>
+#include <compare>
 #include <glad/glad.h>
 #include "texture_provider.hpp"
 #include "scene.hpp"
@@ -12,6 +13,11 @@ namespace myrt
     class pathtracer
     {
     public:
+        struct cubemap_texture {
+            GLuint cubemap;
+            GLuint sampler;
+        };
+
         constexpr static auto max_uniform_distribution_value = 0x0ffffffu;
         constexpr static auto random_number_count = 1<<15;
 
@@ -21,9 +27,9 @@ namespace myrt
         
         void set_projection(rnu::mat4 matrix);
         void set_view(rnu::mat4 matrix);
-        void set_cubemap(GLuint cubemap, GLuint sampler);
+        void set_cubemap(std::optional<cubemap_texture> cubemap);
         void set_lens_radius(float radius);
-        void set_bokeh(GLuint bokeh);
+        void set_bokeh_texture(std::optional<GLuint> bokeh);
         void set_focus(float focus);
         void set_max_bounces(int bounces);
         void reload_shaders();

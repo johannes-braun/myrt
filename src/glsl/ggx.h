@@ -1,15 +1,9 @@
 #pragma once
 const float pi = 3.1415926535897;
 
-// The GGX chi function
 float ggx_chi(float v)
 {
     return float(v > 0);
-}
-
-float saturate(float v)
-{
-    return clamp(v, 0, 1);
 }
 
 float ggx_distribution(vec3 n, vec3 h, float alpha)
@@ -45,12 +39,10 @@ vec2 ggx_importance_sample(const in vec2 random_sample, const in float roughness
   return vec2(phi, theta);
 }
 
-vec3 ggx_importance_hemisphere(const in vec2 importance_sample)
+vec3 sample_hemisphere(const in vec2 importance_sample)
 {
   float phi = importance_sample.x;
   float cosTheta = cos(importance_sample.y);
   float sinTheta = sin(importance_sample.y);
   return vec3(sinTheta * cos(phi), sinTheta * sin(phi), cosTheta);
 }
-
-#undef PI

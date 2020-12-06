@@ -149,9 +149,9 @@ namespace myrt
         if (detail::set_if_different(m_projection_matrix, matrix))
             invalidate_counter();
     }
-    void pathtracer::set_bokeh(GLuint bokeh)
+    void pathtracer::set_bokeh_texture(std::optional<GLuint> bokeh)
     {
-        if (detail::set_if_different(m_bokeh, bokeh))
+        if (detail::set_if_different(m_bokeh, bokeh.has_value() ? bokeh.value() : 0))
             invalidate_counter();
     }
     void pathtracer::set_max_bounces(int bounces)
@@ -169,10 +169,11 @@ namespace myrt
         if (detail::set_if_different(m_view_matrix, matrix))
             invalidate_counter();
     }
-    void pathtracer::set_cubemap(GLuint cubemap, GLuint sampler)
+    void pathtracer::set_cubemap(std::optional<cubemap_texture> cubemap)
     {
-        bool cubemap_changed = detail::set_if_different(m_cubemap, cubemap);
-        bool sampler_changed = detail::set_if_different(m_cubemap_sampler, sampler);
+        const auto has = cubemap.has_value();
+        const auto cubemap_changed = detail::set_if_different(m_cubemap, has ? cubemap->cubemap : 0);
+        const auto sampler_changed = detail::set_if_different(m_cubemap_sampler, has ? cubemap->sampler : 0);
         if (cubemap_changed || sampler_changed)
             invalidate_counter();
     }

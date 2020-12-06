@@ -4,15 +4,6 @@
 #include "interface.h"
 #include "brdf.h"
 
-vec3 rand_offset3d(float maximum, vec3 right, vec3 up)
-{
-    vec2 rands = vec2(
-        next_random() * 2 * 3.1415926535897f,
-        next_random()
-    );
-
-    return sqrt(rands.y) * maximum * (sin(rands.x) * right + cos(rands.x) * up);
-}
 vec2 rand_offset2d(float maximum, vec2 right, vec2 up)
 {
     vec2 rands = vec2(
@@ -37,34 +28,25 @@ vec3 tonemapFilmic(vec3 x) {
   return pow(result, vec3(2.2));
 }
 
-vec3 uncharted2Tonemap(vec3 x) {
-  float A = 0.15;
-  float B = 0.50;
-  float C = 0.10;
-  float D = 0.20;
-  float E = 0.02;
-  float F = 0.30;
-  float W = 11.2;
-  return ((x * (A * x + C * B) + D * E) / (x * (A * x + B) + D * F)) - E / F;
+vec3 lottes(vec3 x) {
+  const vec3 a = vec3(1.6);
+  const vec3 d = vec3(0.977);
+  const vec3 hdrMax = vec3(8.0);
+  const vec3 midIn = vec3(0.18);
+  const vec3 midOut = vec3(0.267);
+
+  const vec3 b =
+      (-pow(midIn, a) + pow(hdrMax, a) * midOut) /
+      ((pow(hdrMax, a * d) - pow(midIn, a * d)) * midOut);
+  const vec3 c =
+      (pow(hdrMax, a * d) * pow(midIn, a) - pow(hdrMax, a) * pow(midIn, a * d) * midOut) /
+      ((pow(hdrMax, a * d) - pow(midIn, a * d)) * midOut);
+
+  return pow(x, a) / (pow(x, a * d) * b + c);
 }
 
-vec3 uncharted2(vec3 color) {
-  const float W = 11.2;
-  float exposureBias = 2.0;
-  vec3 curr = uncharted2Tonemap(exposureBias * color);
-  vec3 whiteScale = 1.0 / uncharted2Tonemap(vec3(W));
-  return curr * whiteScale;
-}
-
-#define tonemap tonemapFilmic
 
 float raySphereIntersect(vec3 r0, vec3 rd, vec3 s0, float sr) {
-    // - r0: ray origin
-    // - rd: normalized ray direction
-    // - s0: sphere center
-    // - sr: sphere radius
-    // - Returns distance from r0 to first intersecion with sphere,
-    //   or -1.0 if no intersection.
     float a = dot(rd, rd);
     vec3 s0_r0 = r0 - s0;
     float b = 2.0 * dot(rd, s0_r0);
@@ -78,11 +60,11 @@ float raySphereIntersect(vec3 r0, vec3 rd, vec3 s0, float sr) {
 void main()
 {
     test_lights[0].position = vec3(4, 5, 4);
-    test_lights[0].color = 100*vec3(1, 1.8, 3);
+    test_lights[0].color = 250*vec3(1, 1.8, 3);
     test_lights[0].radius = 1.3f;
     test_lights[1].position = vec3(-4, 3, 5);
-    test_lights[1].color = 20*vec3(3, 1.8, 1);
-    test_lights[1].radius = 2.7f;
+    test_lights[1].color = 120*vec3(3, 1.8, 1);
+    test_lights[1].radius = 0.7f;
 
     vec4 last_color = texelFetch(u_last_image, ivec2(gl_FragCoord.xy), 0);
     int draw_counter = u_draw_counter;
@@ -92,7 +74,7 @@ void main()
     vec2 off = rand_offset2d(1.0f, vec2(0, 1), vec2(1, 0));
 
     vec2 tsize = vec2(textureSize(u_last_image, 0));
-    vec4 ird = (u_inv_view * u_inv_proj*vec4(((off + gl_FragCoord.xy) / tsize)*2-1, 1, 1));
+    vec4 ird = (u_inv_view * u_inv_proj * vec4(((off + gl_FragCoord.xy) / tsize) * 2 - 1, 1, 1));
     vec3 in_ray_direction = normalize(ird.xyz);
 
     vec3 rc = in_ray_origin + u_focus * in_ray_direction;
@@ -121,6 +103,9 @@ void main()
     brdf_result_t brdf;
     while (bounces-- > 0)
     {
+        if(dot(path_reflectance, path_reflectance) < 1e-5)
+            break;
+
         ray_direction = normalize(ray_direction);
 
         bool hits_nearest = nearest_hit(ray_origin, ray_direction, 1.0 / 0.0, hit_t, hit_bary, hit_triangle, hit_geometry);
@@ -166,10 +151,12 @@ void main()
 
         vec3 face_normal = (normal_matrix * vec4(normalize(cross(normalize(p1 - p0), normalize(p2 - p0))), 0)).xyz;
         if (sign(dot(normal, ray_direction)) != sign(dot(face_normal, ray_direction)))
+        {
             normal = face_normal;
+        }
             
         bool is_incoming = dot(normal, ray_direction) < 0;
-        normal = faceforward(normal, ray_direction, normal);
+        normal = is_incoming ? normal : -normal;
         
         material_info_t material = materials[geometries[hit_geometry].material_index];
 
@@ -181,7 +168,7 @@ void main()
         clear_result(brdf);
         sample_brdf(true, brdf_randoms, material, hit_point, ray_direction, normal, ior_front, ior_back, brdf);
         
-        if(brdf.end_path || brdf.pdf < 1e-3)
+        if(brdf.end_path || brdf.pdf < 1e-3 || isnan(brdf.pdf) || isinf(brdf.pdf) || any(isnan(brdf.reflectance)) || any(isinf(brdf.reflectance)))
         {
             path_color += brdf.reflectance * path_reflectance;
             break;
@@ -193,7 +180,7 @@ void main()
         path_reflectance *= brdf.reflectance * abs(dot(brdf.continue_direction, normal)) / brdf.pdf;
 
         // Make light test
-        int light_index = clamp(int(test_lights.length() * next_random()), 0, test_lights.length());
+        int light_index = clamp(int(test_lights.length() * next_random()), 0, test_lights.length()-1);
         {
             vec3 point_on_light = test_lights[light_index].position + normalize(vec3(next_random(), next_random(), next_random())) * test_lights[light_index].radius * sqrt(next_random());
 
@@ -206,9 +193,11 @@ void main()
             light_test.continue_direction = direction_to_light;
             sample_brdf(false, brdf_randoms, material, hit_point, ray_direction, normal, ior_front, ior_back, light_test);
 
-            if(!any_hit(hit_point + normal * 1.5e-3f, direction_to_light, length(path_to_light)))
+            if(!any_hit(hit_point + normal * 1.5e-2f, direction_to_light, length(path_to_light)))
             {
-                path_color += path_reflectance * light_test.reflectance * test_lights[light_index].color * test_lights.length() * max(0, dot(direction_to_light, normal)) / (distance_to_light);
+                vec3 ref = light_test.reflectance * test_lights[light_index].color * abs(dot(light_test.continue_direction, normal));
+
+                path_color += path_reflectance * ref * test_lights.length() / (distance_to_light);
             }
         }   
 
@@ -219,7 +208,10 @@ void main()
         ray_origin = next_ray_origin;
     }
 
-    path_color = tonemap(path_color);
+    path_color = lottes(path_color);
+
+    if(any(isnan(path_color)) || any(isinf(path_color)))
+        path_color = last_color.rgb;
 
     if(draw_counter > 0)
     {

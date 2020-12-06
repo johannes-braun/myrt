@@ -96,19 +96,19 @@ int main(int argc, char** argv)
                     obj.material = scene.push_material({
                         .albedo_rgba = rnu::vec4ui8(mat->diffuse[0] * 255, mat->diffuse[1] * 255, mat->diffuse[2] * 255, 255),
                         .ior = mat->ior,
-                        .roughness = 0.1f// std::powf(1.f / mat->specularity, 1 / 3.1415926535897f)
+                        .roughness = std::powf(1.f / mat->specularity, 1 / 3.1415926535897f)
                         });
                 }
             }
         };
-        const auto obj_path = res_dir / "plane.obj";
-        load_obj(obj_path);
+        char input_file_buf[256] = "plane.obj";
+        load_obj(res_dir / input_file_buf);
 
         auto [cubemap, cube_sampler] = load_cubemap();
         bool cubemap_enabled = false;
         bool bokeh_enabled = false;
         int samples_per_iteration = 1;
-        bool animate = true;
+        bool animate = false;
         float lens_radius = 100.0f;
         int bounces_per_iteration = 9;
 
@@ -199,24 +199,25 @@ int main(int argc, char** argv)
 
             ImGui::Begin("Settings");
             ImGui::Text("Samples: %d (%.00f sps)", pathtracer.sample_count(), 1.f / delta.asSeconds());
+            ImGui::InputText("Obj file", input_file_buf, std::size(input_file_buf));
             if (ImGui::Button("Reload obj")) {
-                load_obj(obj_path);
+                load_obj(res_dir / input_file_buf);
             }
             if (ImGui::Button("Restart Sampling"))
                 pathtracer.invalidate_counter();
             if (ImGui::Checkbox("Enable Cubemap", &cubemap_enabled))
             {
                 if (cubemap_enabled)
-                    pathtracer.set_cubemap(cubemap, cube_sampler);
+                    pathtracer.set_cubemap(myrt::pathtracer::cubemap_texture{ cubemap, cube_sampler });
                 else
-                    pathtracer.set_cubemap(0, 0);
+                    pathtracer.set_cubemap(std::nullopt);
             }
             if (ImGui::Checkbox("Enable Bokeh", &bokeh_enabled))
             {
                 if (bokeh_enabled)
-                    pathtracer.set_bokeh(bokeh);
+                    pathtracer.set_bokeh_texture(bokeh);
                 else
-                    pathtracer.set_bokeh(0);
+                    pathtracer.set_bokeh_texture(std::nullopt);
             }
             ImGui::DragInt("Samples Per Iteration", &samples_per_iteration, 0.1f, 1, 10);
             if (ImGui::DragInt("Bounces Per Iteration", &bounces_per_iteration, 0.1f, 1, 50))
@@ -242,7 +243,7 @@ int main(int argc, char** argv)
                     ImGui::PushID(static_cast<const void*>(mat.get()));
                     auto mat_info = scene.info_of(mat);
 
-                    if (ImGui::DragFloat("material.roughness", &mat_info.roughness, 0.01f, 0.02f, 1.0f))
+                    if (ImGui::DragFloat("material.roughness", &mat_info.roughness, 0.01f, 0.0f, 1.0f))
                         scene.update_material(mat, mat_info);
                     if (ImGui::DragFloat("material.ior", &mat_info.ior, 0.01f, 0.01f, 100.0f))
                         scene.update_material(mat, mat_info);
@@ -250,6 +251,7 @@ int main(int argc, char** argv)
                         scene.update_material(mat, mat_info);
                     if (ImGui::DragFloat("material.transmission", &mat_info.transmission, 0.01f, 0.0f, 1.0f))
                         scene.update_material(mat, mat_info);
+
                     ImGui::Separator();
                 }
 
