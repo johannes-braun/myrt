@@ -145,9 +145,11 @@ namespace myrt
 
     struct geometric_object
     {
+        std::string name;
         scene::geometry_pointer geometry;
         scene::material_pointer material;
         rnu::mat4 transformation;
+        bool show = true;
 
         void enqueue() const;
     };

@@ -32,6 +32,7 @@ namespace myrt
         void set_bokeh_texture(std::optional<GLuint> bokeh);
         void set_focus(float focus);
         void set_max_bounces(int bounces);
+        void set_enable_russian_roulette(bool enable);
         void reload_shaders();
 
         void invalidate_texture();
@@ -54,6 +55,7 @@ namespace myrt
         GLuint m_bokeh = 0;
         texture_provider_t m_texture_provider;
 
+        bool m_enable_russian_roulette = true;
         int m_sample_counter = 0;
         float m_lens_radius = 100.f;
         float m_last_width = 0;

@@ -335,7 +335,7 @@ namespace myrt
 
     void geometric_object::enqueue() const
     {
-        if (geometry && geometry->scene)
+        if (show && geometry && geometry->scene)
         {
             geometry->scene->enqueue(geometry, material, transformation);
         }

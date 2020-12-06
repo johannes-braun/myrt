@@ -25,6 +25,7 @@ namespace myrt
             auto const step = sub_aabb_size / float(bvh::binned_sah_bin_count);
 
             std::array<std::array<aabb_t, bvh::binned_sah_bin_count>, 3> axis_bins{};
+            std::array<std::array<int, bvh::binned_sah_bin_count>, 3> axis_counts{};
             for (auto index = node.first_child; index <= node.second_child; ++index)
             {
                 const auto centroid = state.aabbs[index].centroid();
@@ -33,33 +34,42 @@ namespace myrt
                 axis_bins[0][bin_id.x].enclose(state.aabbs[index]);
                 axis_bins[1][bin_id.y].enclose(state.aabbs[index]);
                 axis_bins[2][bin_id.z].enclose(state.aabbs[index]);
+                axis_counts[0][bin_id.x]++;
+                axis_counts[1][bin_id.y]++;
+                axis_counts[2][bin_id.z]++;
             }
 
             std::array<std::array<aabb_t, bvh::binned_sah_bin_count>, 3> aabbs_first{};
             std::array<std::array<aabb_t, bvh::binned_sah_bin_count>, 3> aabbs_second{};
+            std::array<std::array<int, bvh::binned_sah_bin_count>, 3> counts_first{};
+            std::array<std::array<int, bvh::binned_sah_bin_count>, 3> counts_second{};
             const auto enclose_reduce = [](aabb_t current, const aabb_t& next) -> aabb_t { current.enclose(next); return current; };
             for (int axis = 0; axis < 3; ++axis)
             {
                 std::partial_sum(begin(axis_bins[axis]), end(axis_bins[axis]), begin(aabbs_first[axis]), enclose_reduce);
                 std::partial_sum(rbegin(axis_bins[axis]), rend(axis_bins[axis]), rbegin(aabbs_second[axis]), enclose_reduce);
+                std::partial_sum(begin(axis_counts[axis]), end(axis_counts[axis]), begin(counts_first[axis]));
+                std::partial_sum(rbegin(axis_counts[axis]), rend(axis_counts[axis]), rbegin(counts_second[axis]));
             }
 
-            float best_surface_area_limit = std::numeric_limits<float>::max();
+            float best_cost = std::numeric_limits<float>::max();
             int best_axis = 0;
             int best_axis_partition = 0;
             for (int axis = 0; axis < 3; ++axis)
             {
                 for (size_t index = 0; index < bvh::binned_sah_bin_count; ++index)
                 {
-                    const auto first = aabbs_first[axis][index].surface_area();
-                    const auto second = aabbs_second[axis][index].surface_area();
-                    const auto max_surface = std::max(first, second);
+                    const auto count_first = counts_first[axis][index];
+                    const auto count_second = counts_second[axis][index];
+                    const auto area_first = aabbs_first[axis][index].surface_area();
+                    const auto area_second = aabbs_second[axis][index].surface_area();
+                    const auto cost = count_first * area_first * area_first + count_second * area_second * area_second;
 
-                    if (max_surface < best_surface_area_limit)
+                    if (cost < best_cost)
                     {
                         best_axis = axis;
                         best_axis_partition = static_cast<int>(index);
-                        best_surface_area_limit = max_surface;
+                        best_cost = cost;
                     }
                 }
             }

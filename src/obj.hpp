@@ -53,6 +53,7 @@ namespace myrt::obj
 
     struct triangulated_object_t
     {
+        std::string name;
         std::vector<unsigned> indices;
         std::vector<vec3_type> positions;
         std::vector<vec3_type> normals;

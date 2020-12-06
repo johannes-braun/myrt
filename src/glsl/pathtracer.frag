@@ -60,10 +60,10 @@ float raySphereIntersect(vec3 r0, vec3 rd, vec3 s0, float sr) {
 void main()
 {
     test_lights[0].position = vec3(4, 5, 4);
-    test_lights[0].color = 250*vec3(1, 1.8, 3);
+    test_lights[0].color = 25*vec3(1, 1.8, 3);
     test_lights[0].radius = 1.3f;
     test_lights[1].position = vec3(-4, 3, 5);
-    test_lights[1].color = 120*vec3(3, 1.8, 1);
+    test_lights[1].color = 12*vec3(3, 1.8, 1);
     test_lights[1].radius = 0.7f;
 
     vec4 last_color = texelFetch(u_last_image, ivec2(gl_FragCoord.xy), 0);
@@ -90,124 +90,138 @@ void main()
     {
         path_reflectance = textureLod(u_bokeh, vec2(0.5) + bokeh_offset, 0).rgb;
     }
-
-    vec2 scaled_bokeh = bokeh_offset * 2 * u_lens_radius * vec2(tsize.x / tsize.y, 1);
-    vec3 ray_origin = in_ray_origin + scaled_bokeh.x * in_pixel_right / u_resolution.x + scaled_bokeh.y * in_pixel_up / u_resolution.y;
-    vec3 ray_direction = normalize(rc - ray_origin);
     
-    float hit_t = 1.0 / 0.0;
-    vec2 hit_bary = vec2(0, 0);
-    uint hit_triangle = 0;
-    uint hit_geometry = 0;
 
-    brdf_result_t brdf;
-    while (bounces-- > 0)
+    if(max(max(path_reflectance.x, path_reflectance.y), path_reflectance.z) < 1e-5)
     {
-        if(dot(path_reflectance, path_reflectance) < 1e-5)
-            break;
+        path_color = vec3(0, 0, 0);
+    }
+    else
+    {
+        vec2 scaled_bokeh = bokeh_offset * 2 * u_lens_radius * vec2(tsize.x / tsize.y, 1);
+        vec3 ray_origin = in_ray_origin + scaled_bokeh.x * in_pixel_right / u_resolution.x + scaled_bokeh.y * in_pixel_up / u_resolution.y;
+        vec3 ray_direction = normalize(rc - ray_origin);
+    
+        float hit_t = 1.0 / 0.0;
+        vec2 hit_bary = vec2(0, 0);
+        uint hit_triangle = 0;
+        uint hit_geometry = 0;
 
-        ray_direction = normalize(ray_direction);
-
-        bool hits_nearest = nearest_hit(ray_origin, ray_direction, 1.0 / 0.0, hit_t, hit_bary, hit_triangle, hit_geometry);
-        for(int l = 0; l < test_lights.length(); ++l)
+        brdf_result_t brdf;
+        while (bounces-- > 0)
         {
-            float t_light = raySphereIntersect(ray_origin, ray_direction, test_lights[l].position, test_lights[l].radius);
-            if(t_light > 0 && t_light < hit_t)
+            ray_direction = normalize(ray_direction);
+
+            bool hits_nearest = nearest_hit(ray_origin, ray_direction, 1.0 / 0.0, hit_t, hit_bary, hit_triangle, hit_geometry);
+            for(int l = 0; l < test_lights.length(); ++l)
             {
+                float t_light = raySphereIntersect(ray_origin, ray_direction, test_lights[l].position, test_lights[l].radius);
+                if(t_light > 0 && t_light < hit_t)
+                {
                 
-                path_color += path_reflectance * test_lights[l].color;
+                    path_color += path_reflectance * test_lights[l].color;
+                    break;
+                }
+            }
+
+            if (!hits_nearest)
+            {
+                if(u_has_cubemap)
+                {
+                    path_color += path_reflectance * textureLod(u_cubemap, ray_direction, 0).rgb;
+                }
+                else
+                {
+                    vec3 env = mix(vec3(0.3f, 0.4f, 0.5f), vec3(1.0f, 0.98f, 0.96f), (ray_direction.y + 1) / 2);
+                    path_color += path_reflectance * env;
+                }
                 break;
             }
-        }
 
-        if (!hits_nearest)
-        {
-            if(u_has_cubemap)
+            uint base_vertex = geometries[hit_geometry].points_base_index;
+            uint base_index = geometries[hit_geometry].indices_base_index;
+
+            vec3 p0 = points[base_vertex + indices[base_index + 3 * hit_triangle + 0]].xyz;
+            vec3 p1 = points[base_vertex + indices[base_index + 3 * hit_triangle + 1]].xyz;
+            vec3 p2 = points[base_vertex + indices[base_index + 3 * hit_triangle + 2]].xyz;
+            vec3 hit_point = (geometries[hit_geometry].transformation * vec4(hit_bary.x * p1 + hit_bary.y * p2 + (1.0 - hit_bary.x - hit_bary.y) * p0, 1)).xyz;
+
+            vec3 n0 = normals[base_vertex + indices[base_index + 3 * hit_triangle + 0]].xyz;
+            vec3 n1 = normals[base_vertex + indices[base_index + 3 * hit_triangle + 1]].xyz;
+            vec3 n2 = normals[base_vertex + indices[base_index + 3 * hit_triangle + 2]].xyz;
+            mat4 normal_matrix = mat4(mat3(transpose(geometries[hit_geometry].inverse_transformation)));
+            vec3 normal = normalize((normal_matrix
+                * vec4((hit_bary.x * n1 + hit_bary.y * n2 + (1.0 - hit_bary.x - hit_bary.y) * n0), 0)).xyz);
+
+            vec3 face_normal = (normal_matrix * vec4(normalize(cross(normalize(p1 - p0), normalize(p2 - p0))), 0)).xyz;
+            if (sign(dot(normal, ray_direction)) != sign(dot(face_normal, ray_direction)))
             {
-                path_color += path_reflectance * textureLod(u_cubemap, ray_direction, 0).rgb;
+                normal = face_normal;
             }
-            else
-            {
-                vec3 env = mix(vec3(0.3f, 0.4f, 0.5f), vec3(1.0f, 0.98f, 0.96f), (ray_direction.y + 1) / 2);
-                path_color += path_reflectance * env;
-            }
-            break;
-        }
-
-        uint base_vertex = geometries[hit_geometry].points_base_index;
-        uint base_index = geometries[hit_geometry].indices_base_index;
-
-        vec3 p0 = points[base_vertex + indices[base_index + 3 * hit_triangle + 0]].xyz;
-        vec3 p1 = points[base_vertex + indices[base_index + 3 * hit_triangle + 1]].xyz;
-        vec3 p2 = points[base_vertex + indices[base_index + 3 * hit_triangle + 2]].xyz;
-        vec3 hit_point = (geometries[hit_geometry].transformation * vec4(hit_bary.x * p1 + hit_bary.y * p2 + (1.0 - hit_bary.x - hit_bary.y) * p0, 1)).xyz;
-
-        vec3 n0 = normals[base_vertex + indices[base_index + 3 * hit_triangle + 0]].xyz;
-        vec3 n1 = normals[base_vertex + indices[base_index + 3 * hit_triangle + 1]].xyz;
-        vec3 n2 = normals[base_vertex + indices[base_index + 3 * hit_triangle + 2]].xyz;
-        mat4 normal_matrix = mat4(mat3(transpose(geometries[hit_geometry].inverse_transformation)));
-        vec3 normal = (normal_matrix
-            * vec4(normalize(hit_bary.x * n1 + hit_bary.y * n2 + (1.0 - hit_bary.x - hit_bary.y) * n0), 0)).xyz;
-
-        vec3 face_normal = (normal_matrix * vec4(normalize(cross(normalize(p1 - p0), normalize(p2 - p0))), 0)).xyz;
-        if (sign(dot(normal, ray_direction)) != sign(dot(face_normal, ray_direction)))
-        {
-            normal = face_normal;
-        }
             
-        bool is_incoming = dot(normal, ray_direction) < 0;
-        normal = is_incoming ? normal : -normal;
+            bool is_incoming = dot(normal, ray_direction) < 0;
+            normal = is_incoming ? normal : -normal;
         
-        material_info_t material = materials[geometries[hit_geometry].material_index];
+            material_info_t material = materials[geometries[hit_geometry].material_index];
 
-        float ior_front = is_incoming ? 1.0 : material.ior;
-        float ior_back = is_incoming ? material.ior : 1.0;
+            float ior_front = is_incoming ? 1.0 : material.ior;
+            float ior_back = is_incoming ? material.ior : 1.0;
 
-        vec4 brdf_randoms = vec4(next_random(), next_random(), next_random(), next_random());
+            vec4 brdf_randoms = vec4(next_random(), next_random(), next_random(), next_random());
 
-        clear_result(brdf);
-        sample_brdf(true, brdf_randoms, material, hit_point, ray_direction, normal, ior_front, ior_back, brdf);
-        
-        if(brdf.end_path || brdf.pdf < 1e-3 || isnan(brdf.pdf) || isinf(brdf.pdf) || any(isnan(brdf.reflectance)) || any(isinf(brdf.reflectance)))
-        {
-            path_color += brdf.reflectance * path_reflectance;
-            break;
-        }     
+            clear_result(brdf);
+            sample_brdf(true, brdf_randoms, material, hit_point, ray_direction, normal, ior_front, ior_back, brdf);
 
-        float light_random = next_random();
-
-        path_probability *= brdf.pdf;
-        path_reflectance *= brdf.reflectance * abs(dot(brdf.continue_direction, normal)) / brdf.pdf;
-
-        // Make light test
-        int light_index = clamp(int(test_lights.length() * next_random()), 0, test_lights.length()-1);
-        {
-            vec3 point_on_light = test_lights[light_index].position + normalize(vec3(next_random(), next_random(), next_random())) * test_lights[light_index].radius * sqrt(next_random());
-
-            vec3 path_to_light = point_on_light - hit_point;
-            vec3 direction_to_light = normalize(path_to_light);
-            float distance_to_light = length(path_to_light);
-    
-            brdf_result_t light_test;
-            clear_result(light_test);
-            light_test.continue_direction = direction_to_light;
-            sample_brdf(false, brdf_randoms, material, hit_point, ray_direction, normal, ior_front, ior_back, light_test);
-
-            if(!any_hit(hit_point + normal * 1.5e-2f, direction_to_light, length(path_to_light)))
+            if(brdf.end_path || brdf.pdf < 1e-3 || isnan(brdf.pdf) || isinf(brdf.pdf) || any(isnan(brdf.reflectance)) || any(isinf(brdf.reflectance)))
             {
-                vec3 ref = light_test.reflectance * test_lights[light_index].color * abs(dot(light_test.continue_direction, normal));
-
-                path_color += path_reflectance * ref * test_lights.length() / (distance_to_light);
+                path_color += brdf.reflectance * path_reflectance;
+                break;
             }
-        }   
 
-        ray_direction = brdf.continue_direction;
+            float light_random = next_random();
 
-        vec3 off = ray_direction * 1.5e-5f;
-        vec3 next_ray_origin = hit_point + off;
-        ray_origin = next_ray_origin;
+            path_probability *= brdf.pdf;
+            path_reflectance *= brdf.reflectance * abs(dot(brdf.continue_direction, normal)) / brdf.pdf;
+
+            if(u_enable_russian_roulette && bounces < u_max_bounces - 3)
+            {
+                float p = max(max(path_reflectance.x, path_reflectance.y), path_reflectance.z);
+                if(next_random() > p)
+                {
+                    path_color = vec3(0);
+                    break;
+                }
+                path_reflectance *= 1/p;
+            }
+
+            // Make light test
+            int light_index = clamp(int(test_lights.length() * next_random()), 0, test_lights.length()-1);
+            {
+                vec3 point_on_light = test_lights[light_index].position + normalize(vec3(next_random(), next_random(), next_random())) * test_lights[light_index].radius * sqrt(next_random());
+
+                vec3 path_to_light = point_on_light - hit_point;
+                vec3 direction_to_light = normalize(path_to_light);
+                float distance_to_light = length(path_to_light);
+    
+                brdf_result_t light_test;
+                clear_result(light_test);
+                light_test.continue_direction = direction_to_light;
+                sample_brdf(false, brdf_randoms, material, hit_point, ray_direction, normal, ior_front, ior_back, light_test);
+
+                if(!any_hit(hit_point + normal * 1.5e-2f, direction_to_light, length(path_to_light)))
+                {
+                    vec3 ref = light_test.reflectance * test_lights[light_index].color * abs(dot(light_test.continue_direction, normal));
+                    path_color += path_reflectance * ref * test_lights.length() / (distance_to_light);
+                }
+            }   
+
+            ray_direction = brdf.continue_direction;
+
+            vec3 off = ray_direction * 1.5e-5f;
+            vec3 next_ray_origin = hit_point + off;
+            ray_origin = next_ray_origin;
+        }
     }
-
     path_color = lottes(path_color);
 
     if(any(isnan(path_color)) || any(isinf(path_color)))

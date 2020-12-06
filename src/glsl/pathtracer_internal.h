@@ -86,8 +86,8 @@ bool visit_object_aabb(vec3 ray_origin, vec3 ray_direction, uint i, inout float 
     traversal.base_vertex = geometries[i].points_base_index;
     vec3 ro = (geometries[i].inverse_transformation * vec4(ray_origin, 1)).xyz;
     vec3 rd = (((geometries[i].inverse_transformation) * vec4(ray_direction, 0)).xyz);
-    bool current_hits = bvh_traverse(geometries[i].bvh_node_base_index, geometries[i].bvh_index_base_index, ro, rd, max_ray_distance) &&
-        traversal.global_t > traversal.t;
+    bool current_hits = bvh_traverse(geometries[i].bvh_node_base_index, geometries[i].bvh_index_base_index, ro, rd, max_ray_distance);
+    current_hits = current_hits && traversal.global_t > traversal.t;
 
     if (current_hits)
     {

@@ -75,6 +75,7 @@ int main(int argc, char** argv)
         myrt::pathtracer pathtracer;
         rnu::camera<float> camera(rnu::vec3{ 0.0f, 0.0f, -15.f });
 
+        float import_scale = 1.0;
         std::vector<myrt::geometric_object> objects;
         const auto load_obj = [&](auto path) {
             objects.clear();
@@ -92,12 +93,14 @@ int main(int argc, char** argv)
                     auto mat = m.material;
 
                     auto& obj = objects.emplace_back();
+                    obj.name = m.name;
                     obj.geometry = mesh;
                     obj.material = scene.push_material({
                         .albedo_rgba = rnu::vec4ui8(mat->diffuse[0] * 255, mat->diffuse[1] * 255, mat->diffuse[2] * 255, 255),
                         .ior = mat->ior,
                         .roughness = std::powf(1.f / mat->specularity, 1 / 3.1415926535897f)
                         });
+                    obj.transformation = rnu::scale(rnu::vec3(import_scale, import_scale, import_scale));
                 }
             }
         };
@@ -107,6 +110,7 @@ int main(int argc, char** argv)
         auto [cubemap, cube_sampler] = load_cubemap();
         bool cubemap_enabled = false;
         bool bokeh_enabled = false;
+        bool rr_enabled = false;
         int samples_per_iteration = 1;
         bool animate = false;
         float lens_radius = 100.0f;
@@ -200,6 +204,7 @@ int main(int argc, char** argv)
             ImGui::Begin("Settings");
             ImGui::Text("Samples: %d (%.00f sps)", pathtracer.sample_count(), 1.f / delta.asSeconds());
             ImGui::InputText("Obj file", input_file_buf, std::size(input_file_buf));
+            ImGui::DragFloat("Obj scale", &import_scale, 0.01, 0.0f, 1000000.0f);
             if (ImGui::Button("Reload obj")) {
                 load_obj(res_dir / input_file_buf);
             }
@@ -218,6 +223,10 @@ int main(int argc, char** argv)
                     pathtracer.set_bokeh_texture(bokeh);
                 else
                     pathtracer.set_bokeh_texture(std::nullopt);
+            }
+            if (ImGui::Checkbox("Enable Russian Roulette", &rr_enabled))
+            {
+                pathtracer.set_enable_russian_roulette(rr_enabled);
             }
             ImGui::DragInt("Samples Per Iteration", &samples_per_iteration, 0.1f, 1, 10);
             if (ImGui::DragInt("Bounces Per Iteration", &bounces_per_iteration, 0.1f, 1, 50))
@@ -256,6 +265,16 @@ int main(int argc, char** argv)
                 }
 
                 ImGui::End();
+            }
+
+            if (ImGui::Begin("Objects"))
+            {
+                for (auto& obj : objects)
+                {
+                    ImGui::PushID(&obj);
+                    ImGui::Text("%s", obj.name.c_str());
+                    ImGui::Checkbox("Show", &obj.show);
+                }
             }
 
             glBindVertexArray(0);

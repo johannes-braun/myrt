@@ -55,6 +55,7 @@ layout(location = 6) uniform float u_lens_radius;
 layout(location = 7) uniform bool u_has_bokeh;
 layout(location = 8) uniform float u_focus;
 layout(location = 9) uniform int u_max_bounces;
+layout(location = 10) uniform bool u_enable_russian_roulette;
 
 // IMAGES
 layout(binding = 0) uniform samplerCube u_cubemap;

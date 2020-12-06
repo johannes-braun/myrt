@@ -96,7 +96,17 @@ namespace myrt::obj
         size_t pos_index_offset = 1;
         size_t tex_index_offset = 1;
         size_t nor_index_offset = 1;
-        std::ifstream fstream(obj_file);
+        std::ifstream in(obj_file, std::ios::binary | std::ios::ate);
+
+        std::streamsize size = in.tellg();
+        in.seekg(0, std::ios::beg);
+
+        std::string buffer(size, ' ');
+        in.read(buffer.data(), size);
+        std::stringstream fstream(buffer);
+        in.close();
+
+        object_t intermediate_obj;
 
         std::unordered_map<std::string, std::shared_ptr<material_t>> mtllib;
         std::shared_ptr<material_t> current_material = make_default_material();
@@ -149,17 +159,21 @@ namespace myrt::obj
             }
             else if (identifier == "g")
             {
+                std::string name;
+                line_stream >> name;
+                if (result.empty())
+                {
+                    result.emplace_back();
+                    result.back().name = name;
+                }
                 auto& next = result.back().groups.emplace_back();
-                line_stream >> next.name;
+                next.name = std::move(name);
                 next.material = current_material;
                 continue;
             }
             else if (identifier == "v")
             {
-                if (result.empty())
-                    result.emplace_back().name = "Default";
-
-                auto& arr = result.back().positions.emplace_back();
+                auto& arr = intermediate_obj.positions.emplace_back();
                 line_stream >> arr[0];
                 line_stream >> arr[1];
                 line_stream >> arr[2];
@@ -167,7 +181,7 @@ namespace myrt::obj
             }
             else if (identifier == "vn")
             {
-                auto& arr = result.back().normals.emplace_back();
+                auto& arr = intermediate_obj.normals.emplace_back();
                 line_stream >> arr[0];
                 line_stream >> arr[1];
                 line_stream >> arr[2];
@@ -175,35 +189,48 @@ namespace myrt::obj
             }
             else if (identifier == "vt")
             {
-                auto& arr = result.back().texcoords.emplace_back();
+                auto& arr = intermediate_obj.texcoords.emplace_back();
                 line_stream >> arr[0];
                 line_stream >> arr[1];
                 continue;
             }
             else if (identifier == "f")
             {
-                if (result.back().normals.empty())
-                    result.back().normals.push_back({ 0, 1, 0 });
-
                 if (result.back().groups.empty())
                     result.back().groups.emplace_back().name = "Default";
+
+                if (!intermediate_obj.positions.empty())
+                {
+                    result.back().positions.insert(result.back().positions.end(), intermediate_obj.positions.begin(), intermediate_obj.positions.end());
+                    intermediate_obj.positions.clear();
+                }
+                if (!intermediate_obj.normals.empty())
+                {
+                    result.back().normals.insert(result.back().normals.end(), intermediate_obj.normals.begin(), intermediate_obj.normals.end());
+                    intermediate_obj.normals.clear();
+                }
+                if (!intermediate_obj.texcoords.empty())
+                {
+                    result.back().texcoords.insert(result.back().texcoords.end(), intermediate_obj.texcoords.begin(), intermediate_obj.texcoords.end());
+                    intermediate_obj.texcoords.clear();
+                }
 
                 auto& face = result.back().groups.back().faces.emplace_back();
                 line_stream.ignore();
                 for (std::string vertex; std::getline(line_stream, vertex, ' ');)
                 {
-                    std::stringstream vertex_stream(vertex);
                     auto& v = face.vertices.emplace_back();
 
                     int p = 0;
                     int t = 0;
                     int n = 0;
 
-                    vertex_stream >> p;
-                    vertex_stream.ignore();
-                    vertex_stream >> t;
-                    vertex_stream.ignore();
-                    vertex_stream >> n;
+                    char* ptr = vertex.data();
+                    p = std::strtol(ptr, &ptr, 10);
+                    ++ptr;
+                    t = std::strtol(ptr, &ptr, 10);
+                    ++ptr;
+                    n = std::strtol(ptr, &ptr, 10);
 
                     if (p < 0) v[0] = result.back().positions.size() + p;
                     else if (p != 0) v[0] = p - pos_index_offset;
@@ -218,6 +245,14 @@ namespace myrt::obj
                     else v[2] = n;
                 }
             }
+        }
+
+        for (auto& o : result)
+        {
+            if (o.texcoords.empty())
+                o.texcoords.push_back({ 0, 0 });
+            if (o.normals.empty())
+                o.normals.push_back({ 0, 1, 0 });
         }
 
         return result;
@@ -259,6 +294,7 @@ namespace myrt::obj
         {
             std::unordered_map<face_identifier, unsigned, face_hasher> face_singulator;
             auto& triangulated = result.emplace_back();
+            triangulated.name = object.name + "/" + group.name;
             triangulated.material = group.material;
             for (const auto& face : group.faces)
             {
