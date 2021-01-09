@@ -108,7 +108,7 @@ void main()
             ray_direction = normalize(ray_direction);
 
             hit_t hit = nearest_hit(ray_origin, ray_direction, 1.0 / 0.0);
-            for(int l = 0; l < test_lights.length(); ++l)
+            for(int l = DONT_OPTIMIZE_ZERO; l < test_lights.length(); ++l)
             {
                 float t_light = raySphereIntersect(ray_origin, ray_direction, test_lights[l].position, test_lights[l].radius);
                 if(t_light > 0 && (!hit.hits||t_light < hit.t))

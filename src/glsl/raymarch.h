@@ -12,8 +12,6 @@ float opSmoothUnion(float d1, float d2, float k) {
     return mix(d2, d1, h) - k * h * (1.0 - h);
 }
 
-#define DONT_OPTIMIZE_ZERO min(u_draw_counter, 0)
-
 float map(vec3 p)
 {
     return opSmoothUnion(sdSphere(p - vec3(0, 0.7, 0), 1.5), sdSphere(p - vec3(0, 3, 0), 0.5), 1.0);

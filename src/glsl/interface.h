@@ -1,5 +1,7 @@
 #pragma once
 
+#define DONT_OPTIMIZE_ZERO min(u_draw_counter, 0)
+
 struct drawable_geometry_t
 {
     mat4 transformation;
