@@ -1,6 +1,7 @@
 #pragma once
 
 #include "intersect_triangle.h"
+#include "raymarch.h"
 
 // Forward declare visitor functions.
 bool visit_triangle(MYRT_INDEX_TYPE node_base_index, MYRT_INDEX_TYPE primitive_base_index, vec3 ro, vec3 rd, float maxt);
@@ -86,6 +87,7 @@ bool visit_object_aabb(vec3 ray_origin, vec3 ray_direction, uint i, inout float 
     traversal.base_vertex = geometries[i].points_base_index;
     vec3 ro = (geometries[i].inverse_transformation * vec4(ray_origin, 1)).xyz;
     vec3 rd = (((geometries[i].inverse_transformation) * vec4(ray_direction, 0)).xyz);
+    traversal.t = max_ray_distance;
     bool current_hits = bvh_traverse(geometries[i].bvh_node_base_index, geometries[i].bvh_index_base_index, ro, rd, max_ray_distance);
     current_hits = current_hits && traversal.global_t > traversal.t;
 
@@ -110,22 +112,57 @@ bool any_hit(vec3 ray_origin, vec3 ray_direction, float max_distance)
     traversal.any_hit = true;
     traversal.t = max_distance;
     traversal.global_t = max_distance;
-    return bvh_traverse_global(0, 0, ray_origin, ray_direction, max_distance);;
-}
-
-bool nearest_hit(vec3 ray_origin, vec3 ray_direction, float max_distance, out float t, out vec2 barycentric, out uint triangle, out uint geometry)
-{
-    traversal_init();
-    traversal.any_hit = false;
-    traversal.t = max_distance;
-    traversal.global_t = max_distance;
     bool hits = bvh_traverse_global(0, 0, ray_origin, ray_direction, max_distance);
 
-    t = traversal.global_t;
-    barycentric = traversal.global_barycentric;
-    triangle = traversal.global_hit_index;
-    geometry = traversal.hit_geometry;
+    if (!hits)
+        hits = march_sdf(ray_origin, ray_direction, max_distance, true).hits;
     return hits;
+}
+
+hit_t nearest_hit(vec3 ray_origin, vec3 ray_direction, float max_distance)
+{
+    hit_t hit;
+
+    traversal_init();
+    traversal.any_hit = false;
+    traversal.global_t = max_distance;
+    hit.hits = bvh_traverse_global(0, 0, ray_origin, ray_direction, max_distance);
+
+    hit.t = traversal.global_t;
+
+    hit_t marched = march_sdf(ray_origin, ray_direction, hit.hits ? hit.t : max_distance, false);
+    if (marched.hits)
+        return marched;
+
+    vec2 hit_bary = traversal.global_barycentric;
+    uint hit_triangle = traversal.global_hit_index;
+    uint hit_geometry = traversal.hit_geometry;
+
+    uint base_vertex = geometries[hit_geometry].points_base_index;
+    uint base_index = geometries[hit_geometry].indices_base_index;
+
+    vec3 p0 = points[base_vertex + indices[base_index + 3 * hit_triangle + 0]].xyz;
+    vec3 p1 = points[base_vertex + indices[base_index + 3 * hit_triangle + 1]].xyz;
+    vec3 p2 = points[base_vertex + indices[base_index + 3 * hit_triangle + 2]].xyz;
+    hit.position = (geometries[hit_geometry].transformation * vec4(hit_bary.x * p1 + hit_bary.y * p2 + (1.0 - hit_bary.x - hit_bary.y) * p0, 1)).xyz;
+    
+    vec3 n0 = normals[base_vertex + indices[base_index + 3 * hit_triangle + 0]].xyz;
+    vec3 n1 = normals[base_vertex + indices[base_index + 3 * hit_triangle + 1]].xyz;
+    vec3 n2 = normals[base_vertex + indices[base_index + 3 * hit_triangle + 2]].xyz;
+    mat4 normal_matrix = mat4(mat3(transpose(geometries[hit_geometry].inverse_transformation)));
+    vec3 normal = normalize((normal_matrix
+        * vec4((hit_bary.x * n1 + hit_bary.y * n2 + (1.0 - hit_bary.x - hit_bary.y) * n0), 0)).xyz);
+
+    vec3 face_normal = (normal_matrix * vec4(normalize(cross(normalize(p1 - p0), normalize(p2 - p0))), 0)).xyz;
+    if (sign(dot(normal, ray_direction)) != sign(dot(face_normal, ray_direction)))
+    {
+        normal = face_normal;
+    }
+    hit.normal = normal;
+
+    hit.material = materials[geometries[hit_geometry].material_index];
+
+    return hit;
 }
 
 const float inverse_max_uint = 1.f / float(0xFFFFFFFFu);

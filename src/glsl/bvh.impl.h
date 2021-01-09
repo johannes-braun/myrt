@@ -58,4 +58,5 @@ bool MYRT_BVH_TRAVERSE(MYRT_INDEX_TYPE node_base_index,
             : MYRT_BVH_NODES_BUFFER[bvh_node_parent(MYRT_BVH_NODES_BUFFER[node_index]) + node_base_index].second_child);
         visited_stack ^= 1;
     }
+    return false;
 }

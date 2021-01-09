@@ -22,9 +22,20 @@ struct material_info_t
     float roughness;
     float metallic;
     float transmission;
+    float emission;
 
-    int aaa[2];
+    int aaa[1];
 };
+
+struct hit_t
+{
+    vec3 position;
+    float t;
+    vec3 normal;
+    bool hits;
+    material_info_t material;
+};
+
 vec4 albedo(material_info_t info)
 {
     return unpackUnorm4x8(info.albedo_rgba_unorm);
@@ -72,7 +83,7 @@ layout(location = 3) in vec3 in_pixel_up;
 layout(location = 0) out vec4 out_color;
 
 bool any_hit(vec3 ray_origin, vec3 ray_direction, float max_distance);
-bool nearest_hit(vec3 ray_origin, vec3 ray_direction, float max_distance, out float t, out vec2 barycentric, out uint triangle, out uint geometry);
+hit_t nearest_hit(vec3 ray_origin, vec3 ray_direction, float max_distance);
 
 void init_random();
 float next_random();

@@ -29,8 +29,9 @@ namespace myrt
         float roughness = 1.0f;
         float metallic = 0.0f;
         float transmission = 0.0f;
+        float emission = 0.0f;
 
-        int aaa[2];
+        int aaa[1];
     };
 
     struct geometry_t;
