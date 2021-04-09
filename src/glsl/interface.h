@@ -1,6 +1,7 @@
 #pragma once
 
 #define DONT_OPTIMIZE_ZERO min(u_draw_counter, 0)
+#include <color.h>
 
 struct drawable_geometry_t
 {
@@ -18,8 +19,8 @@ struct drawable_geometry_t
 
 struct material_info_t
 {
-    uint albedo_rgba_unorm;
-    uint alt_color_rgba;
+    color_rgba_t albedo_rgba_unorm;
+    color_rgba_t alt_color_rgba;
     float ior;
     float roughness;
     float metallic;
@@ -40,11 +41,11 @@ struct hit_t
 
 vec4 albedo(material_info_t info)
 {
-    return unpackUnorm4x8(info.albedo_rgba_unorm);
+    return color_get(info.albedo_rgba_unorm);
 }
 vec4 alt_color(material_info_t info)
 {
-    return unpackUnorm4x8(info.alt_color_rgba);
+    return color_get(info.alt_color_rgba);
 }
 // BUFFERS
 layout(binding = 0, std430) restrict readonly buffer BVH { bvh_node_t bvh_nodes[]; };

@@ -19,10 +19,15 @@
 #include <glad/glad.h>
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
 #include <imgui.h>
+
+#include "vectoring/distance.hpp"
 
 #include <rnu/camera.hpp>
 #include "obj.hpp"
+#include "vectoring/vectoring.hpp"
 
 std::experimental::generator<std::reference_wrapper<sf::Event>> co_poll(sf::Window& window)
 {
@@ -35,8 +40,50 @@ const static std::filesystem::path res_dir = "../../../res";
 
 std::pair<GLuint, GLuint> load_cubemap();
 
+template<std::floating_point T>
+T remap(T value, T old_min, T old_max, T new_min, T new_max)
+{
+  return ((value - old_min) / (old_max - old_min)) * (new_max - new_min) + new_min;
+}
+template<std::floating_point T>
+T remap_clamped(T value, T old_min, T old_max, T new_min, T new_max)
+{
+  return rnu::clamp(((value - old_min) / (old_max - old_min)) * (new_max - new_min) + new_min, new_min, new_max);
+}
+
 int main(int argc, char** argv)
 {
+  std::vector<myrt::path_action_t> path;
+  myrt::vector_image vectoring;
+  vectoring.parse("M150,150l50,0l0,50q-20,40,-50,0l0,-50");
+
+  std::vector<float> imgf(300*300, std::numeric_limits<float>::max());
+  std::vector<unsigned char> img(300*300);
+
+  rnu::vec2d cursor{ 0,0 };
+  myrt::move_cursor(vectoring.path()[0], cursor);
+  for (int i=1; i<vectoring.path().size(); ++i)
+  {
+    auto const& action = vectoring.path()[i];
+    for (int y = 0; y < 300; ++y)
+    {
+      for (int x = 0; x < 300; ++x)
+      {
+        auto& v = imgf[y * 300 + x];
+        auto dist = myrt::distance(rnu::vec2d{ x, y }, cursor, action);
+
+        if (abs(dist) <= abs(v))
+          v = dist;
+
+        img[y * 300 + x] = remap_clamped(v, -20.f, 20.f, 0.f, 255.f);
+      }
+    }
+
+    myrt::move_cursor(action, cursor);
+  }
+  
+  stbi_write_png((res_dir / "dist.png").string().c_str(), 300, 300, 1, img.data(), 0);
+
     sf::ContextSettings settings;
     settings.majorVersion = 4;
     settings.minorVersion = 6;
@@ -46,7 +93,7 @@ int main(int argc, char** argv)
     window.setActive(false);
 
     std::atomic_bool close = false;
-    volatile float focus = 5.0f;
+    volatile float focus = 9.0f;
     std::thread render_thread([&] {
         window.setActive(true);
         gladLoadGL();

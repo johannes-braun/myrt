@@ -1,6 +1,7 @@
 #pragma once
 #include "interface.h"
 #include "ggx.h"
+
 struct brdf_result_t
 {
     vec3 reflectance;
@@ -9,15 +10,14 @@ struct brdf_result_t
     bool end_path;
 };
 
-#define clear_result(result) {\
-    result.reflectance = vec3(0);\
-    result.continue_direction = vec3(0);\
-    result.pdf = 0;\
-    result.end_path = false;\
+#define clear_result(result) {              \
+    (result).reflectance = vec3(0);         \
+    (result).continue_direction = vec3(0);  \
+    (result).pdf = 0;                       \
+    (result).end_path = false;              \
 }
 
 // https://www.cs.cornell.edu/~srm/publications/EGSR07-btdf.pdf
-
 
 void lambert_resample(material_info_t material, vec4 randoms, vec3 position, vec3 incoming, vec3 normal, float ior_front, float ior_back, inout brdf_result_t result)
 {
@@ -30,6 +30,7 @@ void lambert_eval(material_info_t material, vec4 randoms, vec3 position, vec3 in
     float g_x = max(0, dot(normal, result.continue_direction)) / pi;
     result.reflectance = albedo(material).rgb * g_x / dot(result.continue_direction, normal);
 }
+
 void lambert_brdf(bool do_resample, vec4 randoms, material_info_t material, vec3 position, vec3 incoming, vec3 normal, float ior_front, float ior_back, inout brdf_result_t result) {
     if(do_resample) lambert_resample(material, randoms, position, incoming, normal, ior_front, ior_back, result);
     lambert_eval(material, randoms, position, incoming, normal, ior_front, ior_back, result);
@@ -65,8 +66,10 @@ void ggx_pbr_eval(bool do_resample, vec4 randoms, material_info_t material, vec3
 
     float cos_theta = (dot(microfacet_normal, normal));
     result.pdf = D * (cos_theta) * jacobian;
-    result.reflectance = mix(vec3(1), albedo(material).rgb, material.metallic) * D * G / den;
+    vec3 col = mix(vec3(1), albedo(material).rgb, material.metallic);
+    result.reflectance = col * D * G / den;
 }
+
 void ggx_pbr_brdf(bool do_resample, vec4 randoms, material_info_t material, vec3 position, vec3 incoming, vec3 normal, float ior_front, float ior_back, inout brdf_result_t result)
 {
     if (do_resample)

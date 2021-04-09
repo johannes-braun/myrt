@@ -83,8 +83,8 @@ namespace myrt::obj
             .diffuse = {1, 0, 1},
             .specular = {1, 1, 1},
             .emissive = {0, 0, 0},
-            .ior = 1.45,
-            .dissolve = 1.0,
+            .ior = 1.45f,
+            .dissolve = 1.0f,
             .illumination_model = 1
             });
     }
@@ -232,16 +232,16 @@ namespace myrt::obj
                     ++ptr;
                     n = std::strtol(ptr, &ptr, 10);
 
-                    if (p < 0) v[0] = result.back().positions.size() + p;
-                    else if (p != 0) v[0] = p - pos_index_offset;
+                    if (p < 0) v[0] = static_cast<unsigned>(result.back().positions.size() + p);
+                    else if (p != 0) v[0] = static_cast<unsigned>(p - pos_index_offset);
                     else v[0] = p;
 
-                    if (t < 0) v[1] = result.back().texcoords.size() + t;
-                    else if (t != 0) v[1] = t - tex_index_offset;
+                    if (t < 0) v[1] = static_cast<unsigned>(result.back().texcoords.size() + t);
+                    else if (t != 0) v[1] = static_cast<unsigned>(t - tex_index_offset);
                     else v[1] = t;
 
-                    if (n < 0) v[2] = result.back().normals.size() + n;
-                    else if (n != 0) v[2] = n - nor_index_offset;
+                    if (n < 0) v[2] = static_cast<unsigned>(result.back().normals.size() + n);
+                    else if (n != 0) v[2] = static_cast<unsigned>(n - nor_index_offset);
                     else v[2] = n;
                 }
             }

@@ -8,27 +8,41 @@ float ggx_chi(float v)
 
 float ggx_distribution(vec3 n, vec3 h, float alpha)
 {
-    float NoH = dot(n,h);
+  float ndotm = dot(n, h);
+  float a2 = alpha * alpha;
+  float den = ndotm * ndotm * (a2 - 1) + 1;
+  return a2 / (pi * den * den);
+
+    /*float NoH = dot(n,h);
     float alpha2 = alpha * alpha;
     float NoH2 = NoH * NoH;
     float den = NoH2 * alpha2 + (1 - NoH2);
-    return (ggx_chi(NoH) * alpha2) / ( pi * den * den );
+    return (ggx_chi(NoH) * alpha2) / ( pi * den * den );*/
 }
 
-float ggx_partial_geometry(vec3 v, vec3 n, vec3 h, float alpha)
+//float ggx_partial_geometry(vec3 v, vec3 n, vec3 h, float alpha)
+//{
+//    float VoH2 = dot(v,h);
+//    float chi = ggx_chi( VoH2 / dot(v,n) );
+//    VoH2 = VoH2 * VoH2;
+//    float tan2 = ( 1 - VoH2 ) / VoH2;
+//    return (chi * 2) / ( 1 + sqrt( 1 + alpha * alpha * tan2 ) );
+//}
+
+float cook_torrance_geometry_1(vec3 v, vec3 n, vec3 h)
 {
-    float VoH2 = dot(v,h);
-    float chi = ggx_chi( VoH2 / dot(v,n) );
-    VoH2 = VoH2 * VoH2;
-    float tan2 = ( 1 - VoH2 ) / VoH2;
-    return (chi * 2) / ( 1 + sqrt( 1 + alpha * alpha * tan2 ) );
+  return 2 * dot(n, h) * dot(n, v) / dot(v, h);
 }
 
 float ggx_geometry(const in vec3 view, const in vec3 outgoing, const in vec3 normal, const in vec3 facet_normal, float roughness)
 {
-  float geom_in = ggx_partial_geometry(-view, normal, facet_normal, roughness);
+  /*float geom_in = ggx_partial_geometry(-view, normal, facet_normal, roughness);
   float geom_out = ggx_partial_geometry(outgoing, normal, facet_normal, roughness);
-  return geom_in * geom_out;
+  return geom_in *geom_out;*/
+
+  return min(1, min(
+    cook_torrance_geometry_1(-view, normal, facet_normal), 
+    cook_torrance_geometry_1(outgoing, normal, facet_normal)));
 }
 
 vec2 ggx_importance_sample(const in vec2 random_sample, const in float roughness)

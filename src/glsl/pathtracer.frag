@@ -2,7 +2,9 @@
 
 #include "bvh.h"
 #include "interface.h"
+#include "tonemapping.h"
 #include "brdf.h"
+#include "intersect.h"
 
 vec2 rand_offset2d(float maximum, vec2 right, vec2 up)
 {
@@ -22,49 +24,14 @@ struct light_t
     vec2 attenuation;
 } test_lights[2];
 
-vec3 tonemapFilmic(vec3 x) {
-  vec3 X = max(vec3(0.0), x - 0.004);
-  vec3 result = (X * (6.2 * X + 0.5)) / (X * (6.2 * X + 1.7) + 0.06);
-  return pow(result, vec3(2.2));
-}
-
-vec3 lottes(vec3 x) {
-  const vec3 a = vec3(1.6);
-  const vec3 d = vec3(0.977);
-  const vec3 hdrMax = vec3(8.0);
-  const vec3 midIn = vec3(0.18);
-  const vec3 midOut = vec3(0.267);
-
-  const vec3 b =
-      (-pow(midIn, a) + pow(hdrMax, a) * midOut) /
-      ((pow(hdrMax, a * d) - pow(midIn, a * d)) * midOut);
-  const vec3 c =
-      (pow(hdrMax, a * d) * pow(midIn, a) - pow(hdrMax, a) * pow(midIn, a * d) * midOut) /
-      ((pow(hdrMax, a * d) - pow(midIn, a * d)) * midOut);
-
-  return pow(x, a) / (pow(x, a * d) * b + c);
-}
-
-
-float raySphereIntersect(vec3 r0, vec3 rd, vec3 s0, float sr) {
-    float a = dot(rd, rd);
-    vec3 s0_r0 = r0 - s0;
-    float b = 2.0 * dot(rd, s0_r0);
-    float c = dot(s0_r0, s0_r0) - (sr * sr);
-    if (b*b - 4.0*a*c < 0.0) {
-        return -1.0;
-    }
-    return (-b - sqrt((b*b) - 4.0*a*c))/(2.0*a);
-}
-
 void main()
 {
     test_lights[0].position = vec3(4, 5, 4);
     test_lights[0].color = 25*vec3(1, 1.8, 3);
-    test_lights[0].radius = 1.3f;
+    test_lights[0].radius = 0.2f;
     test_lights[1].position = vec3(-4, 3, 5);
     test_lights[1].color = 12*vec3(3, 1.8, 1);
-    test_lights[1].radius = 0.7f;
+    test_lights[1].radius = 0.1f;
 
     vec4 last_color = texelFetch(u_last_image, ivec2(gl_FragCoord.xy), 0);
     int draw_counter = u_draw_counter;
@@ -180,7 +147,7 @@ void main()
                 light_test.continue_direction = direction_to_light;
                 sample_brdf(false, brdf_randoms, hit.material, hit.position, ray_direction, normal, ior_front, ior_back, light_test);
 
-                if(!any_hit(hit.position + normal * 1.5e-2f, direction_to_light, length(path_to_light)))
+                if(!any_hit(hit.position + light_test.continue_direction * 1.5e-5f, direction_to_light, length(path_to_light)))
                 {
                     vec3 ref = light_test.reflectance * test_lights[light_index].color * abs(dot(light_test.continue_direction, normal));
                     path_color += path_reflectance * ref * test_lights.length() / (distance_to_light);

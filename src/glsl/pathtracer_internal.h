@@ -1,6 +1,6 @@
 #pragma once
 
-#include "intersect_triangle.h"
+#include "intersect.h"
 #include "raymarch.h"
 
 // Forward declare visitor functions.

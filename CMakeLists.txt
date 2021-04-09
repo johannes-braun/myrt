@@ -18,7 +18,7 @@ add_executable(myrt
     "src/pathtracer/pathtracer.cpp" 
     "src/pathtracer/scene.hpp" 
     "src/pathtracer/scene.cpp" 
-    "src/pathtracer/utils.cpp" "src/obj.hpp" "src/obj.cpp")
+    "src/pathtracer/utils.cpp" "src/obj.hpp" "src/obj.cpp" "src/glsl/color.h" "src/glsl/tonemapping.h"  "src/vectoring/vectoring.hpp" "src/vectoring/distance.hpp")
 target_compile_features(myrt PUBLIC cxx_std_20)
 
 find_package(SFML 2 COMPONENTS graphics audio main network system window REQUIRED)
