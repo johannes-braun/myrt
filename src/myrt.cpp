@@ -309,6 +309,7 @@ int main(int argc, char** argv)
                         scene.update_material(mat, mat_info);
 
                     ImGui::Separator();
+                    ImGui::PopID();
                 }
 
                 ImGui::End();
@@ -321,7 +322,9 @@ int main(int argc, char** argv)
                     ImGui::PushID(&obj);
                     ImGui::Text("%s", obj.name.c_str());
                     ImGui::Checkbox("Show", &obj.show);
+                    ImGui::PopID();
                 }
+                ImGui::End();
             }
 
             glBindVertexArray(0);
