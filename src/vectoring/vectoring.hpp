@@ -133,6 +133,7 @@ namespace myrt
     case path_action_type::close_alt: return visitor(action.close_data);
     }
     assert(false);
+    throw std::runtime_error("Invalid state: path_action_type cannot be determined.");
   }
 
   inline void move_cursor(path_action_t const& action, rnu::vec2d& cursor)

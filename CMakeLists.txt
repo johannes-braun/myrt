@@ -6,9 +6,9 @@ project(myrt
 
 add_executable(myrt 
     "src/myrt.cpp" 
-    "src/cube.hpp" 
-    "src/suzanne.hpp"  
-    "src/plate_of_beans.hpp" 
+     
+      
+     
     "src/pathtracer/bvh.hpp" 
     "src/pathtracer/bvh.cpp" 
     "src/pathtracer/utils.hpp" 
