@@ -5,7 +5,7 @@ project(myrt
     LANGUAGES CXX)
 
 add_executable(myrt 
-    "src/myrt.cpp" 
+    #"src/myrt.cpp" 
     "src/pathtracer/bvh.hpp" 
     "src/pathtracer/bvh.cpp" 
     "src/pathtracer/utils.hpp" 
@@ -16,8 +16,8 @@ add_executable(myrt
     "src/pathtracer/scene.hpp" 
     "src/pathtracer/scene.cpp" 
     "src/pathtracer/utils.cpp" "src/obj.hpp" "src/obj.cpp" "src/glsl/color.h" "src/glsl/tonemapping.h"  "src/vectoring/vectoring.hpp" "src/vectoring/distance.hpp"  "src/stb.cpp" 
-    #"src/main.cpp" 
-    "src/sfml.hpp" "src/gl.hpp" "src/resources.hpp")
+    "src/main.cpp" 
+    "src/sfml.hpp" "src/gl.hpp" "src/resources.hpp" "src/sdf.hpp")
 target_compile_features(myrt PUBLIC cxx_std_20)
 
 find_package(SFML 2 COMPONENTS graphics audio main network system window REQUIRED)

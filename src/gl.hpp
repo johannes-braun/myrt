@@ -17,7 +17,7 @@ namespace myrt::gl {
     delta_time_t delta_time;
   };
 
-  inline std::experimental::generator<frame_t> next_frame(sf::RenderWindow& window) {
+  inline void start(sf::RenderWindow& window) {
     window.setActive(true);
     gladLoadGL();
     printf_s(
@@ -44,7 +44,9 @@ namespace myrt::gl {
     ImGui::SFML::Init(window, false);
     ImGui::GetIO().Fonts->AddFontFromFileTTF((resources_dir / "alata.ttf").string().c_str(), 20);
     ImGui::SFML::UpdateFontTexture();
+  }
 
+  inline std::experimental::generator<frame_t> next_frame(sf::RenderWindow& window) {
     frame_t current_frame;
     auto last_frame_time = std::chrono::steady_clock::now();
     while (true) {
@@ -52,6 +54,7 @@ namespace myrt::gl {
       current_frame.delta_time = std::chrono::duration_cast<delta_time_t>(
         current_time - last_frame_time
         );
+      last_frame_time = std::chrono::steady_clock::now();
       ImGui::SFML::Update(window, sf::seconds(static_cast<float>(current_frame.delta_time.count())));
 
       co_yield current_frame;

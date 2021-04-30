@@ -129,11 +129,16 @@ namespace myrt
                     next->get()->info.points_base_index);
             }();
 
-            m_bvh_indices.erase(m_bvh_indices.begin() + info.bvh_index_base_index, m_bvh_indices.begin() + bvh_index_end);
-            m_bvh_nodes.erase(m_bvh_nodes.begin() + info.bvh_node_base_index, m_bvh_nodes.begin() + bvh_node_end);
-            m_indices.erase(m_indices.begin() + info.indices_base_index, m_indices.begin() + indices_end);
-            m_vertices.erase(m_vertices.begin() + info.points_base_index, m_vertices.begin() + ponts_end);
-            m_normals.erase(m_normals.begin() + info.points_base_index, m_normals.begin() + ponts_end);
+            if(!m_bvh_indices.empty())
+              m_bvh_indices.erase(m_bvh_indices.begin() + info.bvh_index_base_index, m_bvh_indices.begin() + bvh_index_end);
+            if (!m_bvh_nodes.empty())
+              m_bvh_nodes.erase(m_bvh_nodes.begin() + info.bvh_node_base_index, m_bvh_nodes.begin() + bvh_node_end);
+            if (!m_indices.empty())
+              m_indices.erase(m_indices.begin() + info.indices_base_index, m_indices.begin() + indices_end);
+            if (!m_vertices.empty())
+              m_vertices.erase(m_vertices.begin() + info.points_base_index, m_vertices.begin() + ponts_end);
+            if (!m_normals.empty())
+              m_normals.erase(m_normals.begin() + info.points_base_index, m_normals.begin() + ponts_end);
 
             std::for_each(iter, m_available_geometries.end(), [&](const geometry_pointer& ptr) {
                 ptr->info.bvh_index_base_index -= bvh_index_end - info.bvh_index_base_index;

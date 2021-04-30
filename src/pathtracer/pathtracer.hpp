@@ -55,7 +55,7 @@ namespace myrt
         GLuint m_bokeh = 0;
         texture_provider_t m_texture_provider;
 
-        bool m_enable_russian_roulette = true;
+        bool m_enable_russian_roulette = false;
         int m_sample_counter = 0;
         float m_lens_radius = 100.f;
         float m_last_width = 0;
