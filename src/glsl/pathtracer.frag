@@ -58,7 +58,6 @@ void main()
         path_reflectance = textureLod(u_bokeh, vec2(0.5) + bokeh_offset, 0).rgb;
     }
     
-
     if(max(max(path_reflectance.x, path_reflectance.y), path_reflectance.z) < 1e-5)
     {
         path_color = vec3(0, 0, 0);

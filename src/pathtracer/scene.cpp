@@ -189,7 +189,7 @@ namespace myrt
         size_t const geom_hash = std::hash<decltype(geometry)>()(geometry);
         size_t const mat_hash = std::hash<decltype(material)>()(material);
         size_t tf_hash = 0;
-        for (size_t c = 0; c < transformation.cols; ++c)
+        for (size_t c = 0; c < transformation.columns; ++c)
         {
             for (size_t r = 0; r < transformation.rows; ++r) {
                 tf_hash ^= std::hash<float>()(transformation.at(c, r));

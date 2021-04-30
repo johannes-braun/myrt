@@ -12,7 +12,7 @@ namespace myrt
         template<typename T, typename K>
         [[nodiscard]] bool set_if_different(T& t, K&& new_value)
         {
-            if (t != new_value)
+            if (!bool(t == new_value))
             {
                 t = static_cast<T>(std::forward<K>(new_value));
                 return true;

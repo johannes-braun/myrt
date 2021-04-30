@@ -3,32 +3,44 @@
 #include "pathtracer/texture_provider.hpp"
 #include "pathtracer/pathtracer.hpp"
 #include "pathtracer/scene.hpp"
-#include <imgui-SFML.h>
+#include "obj.hpp"
+
 #include <iostream>
 #include <sstream>
 #include <thread>
 #include <filesystem>
 #include <random>
+#include <charconv>
+#include <variant>
+#include <array>
+#include <cstddef>
+#include <cinttypes>
+#include <bit>
+#include <vector>
+#include <span>
+#include <ranges>
+#include <optional>
+#include <functional>
+#include <string_view>
+#include <experimental/generator>
+
+#include <rnu/camera.hpp>
+#include <rnu/math/math.hpp>
+
+#include <glad/glad.h>
+#include <stb_image.h>
+#include <stb_image_write.h>
+#include <imgui.h>
+#include <imgui-SFML.h>
 #include <SFML/Graphics/RenderWindow.hpp>
 #include <SFML/Graphics/Texture.hpp>
 #include <SFML/Window.hpp>
-#include <glad/glad.h>
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include <stb_image_write.h>
-#include <imgui.h>
 
-#include "vectoring/distance.hpp"
-
-#include <rnu/camera.hpp>
-#include "obj.hpp"
-#include "vectoring/vectoring.hpp"
+#include <rnu/math/quat.hpp>
 
 std::experimental::generator<std::reference_wrapper<sf::Event>> co_poll(sf::Window& window)
 {
-  sf::Event event{};
-  while (window.pollEvent(event))
+  for (sf::Event event{}; window.pollEvent(event);)
     co_yield event;
 }
 
@@ -36,19 +48,8 @@ const static std::filesystem::path res_dir = "../../../res";
 
 std::pair<GLuint, GLuint> load_cubemap();
 
-//template<std::floating_point T>
-//T remap(T value, T old_min, T old_max, T new_min, T new_max)
-//{
-//  return ((value - old_min) / (old_max - old_min)) * (new_max - new_min) + new_min;
-//}
-//template<std::floating_point T>
-//T remap_clamped(T value, T old_min, T old_max, T new_min, T new_max)
-//{
-//  return rnu::clamp(((value - old_min) / (old_max - old_min)) * (new_max - new_min) + new_min, new_min, new_max);
-//}
 int main(int argc, char** argv)
 {
-  
   sf::ContextSettings settings;
   settings.majorVersion = 4;
   settings.minorVersion = 6;
@@ -153,10 +154,8 @@ int main(int argc, char** argv)
 
       if (animate)
       {
-        for (auto& obj : objects)
-        {
-          obj.transformation = obj.transformation * rnu::rotation(rnu::quat{ delta.asSeconds(), rnu::vec3(0, 1, 0) });
-        }
+        for (myrt::geometric_object& object : objects)
+          object.transformation *= rnu::rotation(rnu::quat(rnu::vec3(0, 1, 0), delta.asSeconds()));
       }
 
       int i = 0;
@@ -169,6 +168,7 @@ int main(int argc, char** argv)
         }
         i++;
       }
+
       auto view = camera.matrix(true);
       auto proj = camera.projection(rnu::radians(60.f), float(window.getSize().x) / float(window.getSize().y), 0.01f, 1000.f, true);
 
@@ -287,7 +287,20 @@ int main(int argc, char** argv)
           ImGui::PushID(&obj);
           ImGui::Text("%s", obj.name.c_str());
           ImGui::Checkbox("Show", &obj.show);
-          ImGui::PopID();
+          ImGui::PopID(); for (auto const& event : co_poll(window))
+          {
+            ImGui::SFML::ProcessEvent(event);
+            switch (event.get().type)
+            {
+            case sf::Event::Closed:
+              close = true;
+              break;
+            case sf::Event::MouseWheelScrolled:
+              if (!ImGui::GetIO().WantCaptureMouse)
+                focus += 0.2f * event.get().mouseWheelScroll.delta;
+              break;
+            }
+          }
         }
         ImGui::End();
       }

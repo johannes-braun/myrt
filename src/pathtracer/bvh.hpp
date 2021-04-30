@@ -1,16 +1,10 @@
 #pragma once
 
 #include <rnu/math/math.hpp>
-#include <array>
-#include <cstddef>
-#include <cinttypes>
-#include <bit>
-#include <vector>
-#include <span>
-#include <ranges>
 #include <optional>
+#include <span>
+#include <vector>
 #include <functional>
-#include <string_view>
 #include <experimental/generator>
 
 namespace myrt
@@ -151,10 +145,4 @@ namespace myrt
 		std::vector<aligned_node_t> m_nodes;
 		std::vector<index_type> m_reordered_indices;
 	};
-
-	namespace glsl {
-		[[nodiscard]] std::string bvh_definitions_code(std::string const& traversal_name);
-		[[nodiscard]] std::string bvh_code(std::string const& traversal_name, std::string const& primitive_name, std::string const& nodes, std::string const& indices);
-		[[nodiscard]] std::string intersect_triangle_code();
-	}
 }

@@ -37,6 +37,17 @@ namespace myrt
     struct geometry_t;
     struct material_t;
 
+    struct geometric_object
+    {
+      std::string name;
+      std::shared_ptr<geometry_t> geometry;
+      std::shared_ptr<material_t> material;
+      rnu::mat4 transformation;
+      bool show = true;
+
+      void enqueue() const;
+    };
+
     class scene
     {
     public:
@@ -142,16 +153,5 @@ namespace myrt
         material_pointer m_default_material;
         bool m_materials_changed = false;
         bool m_geometries_changed = false;
-    };
-
-    struct geometric_object
-    {
-        std::string name;
-        scene::geometry_pointer geometry;
-        scene::material_pointer material;
-        rnu::mat4 transformation;
-        bool show = true;
-
-        void enqueue() const;
     };
 }
