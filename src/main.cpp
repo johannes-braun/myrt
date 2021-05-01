@@ -8,214 +8,144 @@
 
 #include "sdf.hpp"
 
-namespace myrt {
-  inline std::string generate_glsl(
-    std::shared_ptr<sdf_instruction> const& root,
-    std::stringstream& functions,
-    std::stringstream& distance_function,
-    std::stringstream& mul,
-    std::unordered_set<size_t>& used_functions,
-    std::unordered_set<size_t>& used_objects,
-    std::unordered_set<sdf_param::type>& used_param_types,
-    std::unordered_map<std::shared_ptr<sdf_param>, int>& buffer_offsets,
-    int& current_offset)
-  {
-    const auto hash = std::hash<std::string>{}(root->glsl_string);
-    const auto fun_name = "f" + std::to_string(hash);
-    if (used_functions.emplace(hash).second) {
-
-      for (auto const& par : root->params)
-      {
-        if (used_param_types.emplace(par->param_type).second)
-          functions << get_function_string(*par);
-      }
-
-      switch (root->instruction_type)
-      {
-      case sdf_instruction::type::prim:
-        functions << "float " << fun_name << "(vec3 in_position";
-        break;
-      case sdf_instruction::type::op:
-        functions << "float " << fun_name << "(float in_distance0, float in_distance1";
-        break;
-      case sdf_instruction::type::mod:
-        functions << "vec3 " << fun_name << "(vec3 in_position, out float out_multiplier";
-        break;
-      }
-
-      int i = 0;
-      for (auto const& par : root->params)
-        functions << "," << par->name() << " in_param" << i++;
-
-      functions << "){" << root->glsl_string << "}";
-    }
-
-    switch (root->instruction_type)
-    {
-    case sdf_instruction::type::prim:
-    {
-      auto h = std::hash<std::shared_ptr<sdf_instruction>>{}(root);
-      auto const dname = "p" + std::to_string(h);
-      if (used_objects.emplace(h).second) {
-        int off = current_offset;
-        std::vector<std::string> param_names;
-        for (auto const& par : root->params)
-        {
-          auto param_hash = std::hash<std::shared_ptr<sdf_param>>{}(par);
-          std::string param_name = "par" + std::to_string(param_hash);
-          if (used_objects.emplace(param_hash).second) {
-            buffer_offsets[par] = current_offset;
-            distance_function << par->name() << " " << param_name << "=sdrd_" << par->name() << "(" << current_offset << ");";
-            current_offset += par->blocks();
-          }
-          param_names.push_back(param_name);
-        }
-        auto const p = std::static_pointer_cast<sdf_prim>(root);
-        std::string in_pos = "in_position";
-        if (!p->parent.expired())
-        {
-          auto parent = p->parent.lock();
-          in_pos = generate_glsl(parent, functions, distance_function, mul, used_functions, used_objects, used_param_types, buffer_offsets, current_offset);
-        }
-        distance_function << "float " << dname << "=" << fun_name << "(" << in_pos;
-
-        for (auto const& n : param_names)
-          distance_function << "," << n;
-        distance_function << ");";
-      }
-      return dname;
-    }
-    break;
-    case sdf_instruction::type::op:
-    {
-      auto h = std::hash<std::shared_ptr<sdf_instruction>>{}(root);
-      auto const dname = "o" + std::to_string(h);
-      if (used_objects.emplace(h).second) {
-        int off = current_offset;
-        std::vector<std::string> param_names;
-        for (auto const& par : root->params)
-        {
-          auto param_hash = std::hash<std::shared_ptr<sdf_param>>{}(par);
-          std::string param_name = "par" + std::to_string(param_hash);
-          if (used_objects.emplace(param_hash).second) {
-            buffer_offsets[par] = current_offset;
-            distance_function << par->name() << " " << param_name << "=sdrd_" << par->name() << "(" << current_offset << ");";
-            current_offset += par->blocks();
-          }
-          param_names.push_back(param_name);
-        }
-        auto const p = std::static_pointer_cast<sdf_op>(root);
-        std::string in_pos1 = "in_position";
-        std::string in_pos2 = "in_position";
-        if (!p->lhs.expired())
-        {
-          auto parent = p->lhs.lock();
-          in_pos1 = generate_glsl(parent, functions, distance_function, mul, used_functions, used_objects, used_param_types, buffer_offsets, current_offset);
-        }
-        if (!p->rhs.expired())
-        {
-          auto parent = p->rhs.lock();
-          in_pos2 = generate_glsl(parent, functions, distance_function, mul, used_functions, used_objects, used_param_types, buffer_offsets, current_offset);
-        }
-        distance_function << "float " << dname << "=" << fun_name << "(" << in_pos1 << "," << in_pos2;
-
-        for (auto const& n : param_names)
-          distance_function << "," << n;
-        distance_function << ");";
-      }
-      return dname;
-    }
-    break;
-    case sdf_instruction::type::mod:
-    {
-      auto h = std::hash<std::shared_ptr<sdf_instruction>>{}(root);
-      auto const dname = "m" + std::to_string(h);
-      auto mul_name = "j" + dname;
-      mul << "*" << mul_name;
-
-      if (used_objects.emplace(h).second) {
-        distance_function << "float " << mul_name << "=1.0;";
-        int off = current_offset;
-        std::vector<std::string> param_names;
-        for (auto const& par : root->params)
-        {
-          auto param_hash = std::hash<std::shared_ptr<sdf_param>>{}(par);
-          std::string param_name = "par" + std::to_string(param_hash);
-          if (used_objects.emplace(param_hash).second) {
-            buffer_offsets[par] = current_offset;
-            distance_function << par->name() << " " << param_name << "=sdrd_" << par->name() << "(" << current_offset << ");";
-            current_offset += par->blocks();
-          }
-          param_names.push_back(param_name);
-        }
-        auto const p = std::static_pointer_cast<sdf_mod>(root);
-        std::string in_pos = "in_position";
-        if (!p->parent.expired())
-        {
-          auto parent = p->parent.lock();
-          in_pos = generate_glsl(parent, functions, distance_function, mul, used_functions, used_objects, used_param_types, buffer_offsets, current_offset);
-        }
-        distance_function << "vec3 " << dname << "=" << fun_name << "(" << in_pos << "," << mul_name;
-
-        for (auto const& n : param_names)
-          distance_function << "," << n;
-        distance_function << ");";
-      }
-      return dname;
-    }
-    break;
-  }
-}
-
-inline std::string generate_glsl(std::shared_ptr<sdf_instruction> const& root, std::unordered_map<std::shared_ptr<sdf_param>, int>& buffer_offsets)
-{
-  std::stringstream functions;
-  std::stringstream mul;
-  mul << "1.0";
-  std::stringstream distance_function;
-  std::unordered_set<size_t> used_functions;
-  std::unordered_set<size_t> used_objects;
-  std::unordered_set<sdf_param::type> used_param_types;
-  int current_offset = 0;
-  auto d = generate_glsl(root, functions, distance_function, mul, used_functions, used_objects, used_param_types, buffer_offsets, current_offset);
-
-  return functions.str() + "float map(vec3 in_position) { int in_buffer_offset=0;" + distance_function.str() + "return " + mul.str() + "*" + d + ";}";
-}
-
-template<typename T> requires std::is_base_of_v<sdf_instruction, T>
-  inline std::string generate_glsl(std::shared_ptr<T> const& root, std::unordered_map<std::shared_ptr<sdf_param>, int>& buffer_offsets)
-  {
-    return generate_glsl(std::static_pointer_cast<sdf_instruction>(root), buffer_offsets);
-  }
-}
-
 const static std::filesystem::path res_dir = "../../../res";
+/*
+*
+* #define MAT material_info_t
+* MAT load_material(int i) { return mat_buf[i];}
+* MAT mix_material(MAT a, MAT b, float fac) { return ...; }
+
+float prim(vec3 p, inout MAT in_material)
+{
+  // code...
+  material = load_material(in_param0);
+}
+
+float op(float d0, float d1, MAT m0, MAT m1, out MAT omat)
+{
+
+}
+
+map(vec3, out MAT mat)
+{
+
+}
+
+*/
 
 void render_function(std::stop_token stop_token, sf::RenderWindow* window);
 std::vector<myrt::geometric_object> load_object_file(myrt::scene& scene, std::filesystem::path const& path, float import_scale = 1.0f);
 std::pair<GLuint, GLuint> load_cubemap();
 
+
+struct sdf_host {
+  template<typename T>
+  sdf_host(std::shared_ptr<T> const& root) requires std::is_base_of_v<myrt::sdf_instruction, T> {
+    glsl_string = myrt::generate_glsl(root, offsets);
+    buf.resize(std::max_element(begin(offsets), end(offsets), [](auto const& pair, auto const& p2) { return pair.second < p2.second; })->second + 1);
+  }
+
+  void set_value(std::shared_ptr<myrt::sdf_parameter> const& param, float* data) {
+    for (size_t i = 0; i < param->type->buffer_blocks; ++i)
+    {
+      myrt::sdf_parameter_link self{ param, i };
+      auto const& link = param->get_link(i);
+      if (!link.is_linked())
+      {
+        buf[offsets.at(self.hash())] = data[i];
+      }
+    }
+  }
+  void get_value(myrt::sdf_parameter_link const& self, float* data) const {
+    auto const& link = self.other->get_link(self.block);
+    if (!link.is_linked())
+    {
+      data[0] = buf[offsets.at(self.hash())];
+    }
+    else
+    {
+      get_value(link, data);
+    }
+  }
+  void get_value(std::shared_ptr<myrt::sdf_parameter> const& param, float* data) const {
+    for (size_t i = 0; i < param->type->buffer_blocks; ++i)
+    {
+      myrt::sdf_parameter_link self{ param, i };
+      get_value(self, data + i);
+    }
+  }
+  void set_value(std::shared_ptr<myrt::int_param> const& param, int data) {
+    float cast = float(data);
+    set_value(param, &cast);
+  }
+  void set_value(std::shared_ptr<myrt::vec3_param> const& param, rnu::vec3 data) {
+    set_value(param, data.data());
+  }
+  void set_value(std::shared_ptr<myrt::float_param> const& param, float data) {
+    set_value(param, &data);
+  }
+
+  void get_value(std::shared_ptr<myrt::int_param> const& param, int& data) const {
+    float cast = float(data);
+    get_value(param, &cast);
+    data = int(cast);
+  }
+  void get_value(std::shared_ptr<myrt::vec3_param> const& param, rnu::vec3& data) const {
+    get_value(param, data.data());
+  }
+  void get_value(std::shared_ptr<myrt::float_param> const& param, float& data) const {
+    get_value(param, &data);
+  }
+
+  template<typename T, typename Param>
+  T get_value(std::shared_ptr<Param> const& param) const requires std::is_base_of_v<myrt::sdf_parameter, Param>{
+    T value;
+    get_value(param, value);
+    return value;
+  }
+
+  std::string glsl_string;
+  std::unordered_map<size_t, int> offsets;
+  std::vector<float> buf;
+};
+
 int main(int argc, char** argv) {
 
-  auto param = myrt::make_float_param();
+  auto material = myrt::make_int_param();
+  auto material2 = myrt::make_int_param();
 
-  auto sphere1 = myrt::sphere(param);
-  auto sphere2 = myrt::sphere(param);
+  auto sphere_radius = myrt::make_float_param();
 
-  auto sunion = myrt::smooth_union(param);
+  auto sphere1 = myrt::sdfs::sphere(sphere_radius, material);
+
+  auto box_size = myrt::make_vec3_param();
+  box_size->link_value_block(0, sphere_radius, 0);
+  auto sphere2 = myrt::sdfs::box_rounded(box_size, myrt::make_float_param(), material2);
+
+  auto union_smoothness = myrt::make_float_param();
+  auto sunion = myrt::sdfs::smooth_union(union_smoothness);
   sunion->set_lhs(sphere1);
   sunion->set_rhs(sphere2);
 
-  auto soff = myrt::translate(myrt::make_vec3_param());
-  auto soff2 = myrt::translate(myrt::make_vec3_param());
+  auto soff = myrt::sdfs::translate(myrt::make_vec3_param());
+  auto soff2 = myrt::sdfs::translate(myrt::make_vec3_param());
 
   sphere1->set_parent(soff);
   soff2->set_parent(soff);
   sphere2->set_parent(soff2);
 
-  std::unordered_map<std::shared_ptr<myrt::sdf_param>, int> buffer_offsets;
-  auto test = myrt::generate_glsl(sunion, buffer_offsets);
+  sdf_host host(sunion);
+  host.set_value(sphere_radius, 2.0);
+  host.set_value(union_smoothness, 0.2);
+  host.set_value(box_size, rnu::vec3(1, 1, 1));
+  host.set_value(material, 0);
+  host.set_value(material2, 1);
 
+  auto val = host.get_value<rnu::vec3>(box_size);
+
+  std::string str;
+  for (auto const& el : host.buf)
+    str += std::to_string(el) + ", ";
   // todo: "generate aabbs?"
   //  -> add to bvh?
   //  -> aabb per sdf?
