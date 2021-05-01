@@ -38,114 +38,59 @@ std::vector<myrt::geometric_object> load_object_file(myrt::scene& scene, std::fi
 std::pair<GLuint, GLuint> load_cubemap();
 
 
-struct sdf_host {
-  template<typename T>
-  sdf_host(std::shared_ptr<T> const& root) requires std::is_base_of_v<myrt::sdf_instruction, T> {
-    glsl_string = myrt::generate_glsl(root, offsets);
-    buf.resize(std::max_element(begin(offsets), end(offsets), [](auto const& pair, auto const& p2) { return pair.second < p2.second; })->second + 1);
-  }
-
-  void set_value(std::shared_ptr<myrt::sdf_parameter> const& param, float* data) {
-    for (size_t i = 0; i < param->type->buffer_blocks; ++i)
-    {
-      myrt::sdf_parameter_link self{ param, i };
-      auto const& link = param->get_link(i);
-      if (!link.is_linked())
-      {
-        buf[offsets.at(self.hash())] = data[i];
-      }
-    }
-  }
-  void get_value(myrt::sdf_parameter_link const& self, float* data) const {
-    auto const& link = self.other->get_link(self.block);
-    if (!link.is_linked())
-    {
-      data[0] = buf[offsets.at(self.hash())];
-    }
-    else
-    {
-      get_value(link, data);
-    }
-  }
-  void get_value(std::shared_ptr<myrt::sdf_parameter> const& param, float* data) const {
-    for (size_t i = 0; i < param->type->buffer_blocks; ++i)
-    {
-      myrt::sdf_parameter_link self{ param, i };
-      get_value(self, data + i);
-    }
-  }
-  void set_value(std::shared_ptr<myrt::int_param> const& param, int data) {
-    float cast = float(data);
-    set_value(param, &cast);
-  }
-  void set_value(std::shared_ptr<myrt::vec3_param> const& param, rnu::vec3 data) {
-    set_value(param, data.data());
-  }
-  void set_value(std::shared_ptr<myrt::float_param> const& param, float data) {
-    set_value(param, &data);
-  }
-
-  void get_value(std::shared_ptr<myrt::int_param> const& param, int& data) const {
-    float cast = float(data);
-    get_value(param, &cast);
-    data = int(cast);
-  }
-  void get_value(std::shared_ptr<myrt::vec3_param> const& param, rnu::vec3& data) const {
-    get_value(param, data.data());
-  }
-  void get_value(std::shared_ptr<myrt::float_param> const& param, float& data) const {
-    get_value(param, &data);
-  }
-
-  template<typename T, typename Param>
-  T get_value(std::shared_ptr<Param> const& param) const requires std::is_base_of_v<myrt::sdf_parameter, Param>{
-    T value;
-    get_value(param, value);
-    return value;
-  }
-
-  std::string glsl_string;
-  std::unordered_map<size_t, int> offsets;
-  std::vector<float> buf;
-};
 
 int main(int argc, char** argv) {
 
-  auto material = myrt::make_int_param();
-  auto material2 = myrt::make_int_param();
+  // Step 1: build sdf scene
+  myrt::sdfs::torus torus1;
+  myrt::sdfs::sphere sphere2;
+  myrt::sdfs::sphere sphere3;
+  myrt::sdfs::menger_fractal fractal;
 
-  auto sphere_radius = myrt::make_float_param();
+  myrt::sdfs::translate fractal_offset;
+  myrt::sdfs::translate torus1_top;
+  myrt::sdfs::translate sphere2_middle;
+  myrt::sdfs::translate sphere3_bottom;
 
-  auto sphere1 = myrt::sdfs::sphere(sphere_radius, material);
+  fractal.transform(fractal_offset);
+  torus1.transform(torus1_top);
+  sphere2.transform(sphere2_middle);
+  sphere3.transform(sphere3_bottom);
 
-  auto box_size = myrt::make_vec3_param();
-  box_size->link_value_block(0, sphere_radius, 0);
-  auto sphere2 = myrt::sdfs::box_rounded(box_size, myrt::make_float_param(), material2);
+  myrt::sdfs::hard_union unite_torus_fractal;
+  unite_torus_fractal.set_left(torus1).set_right(fractal);
 
-  auto union_smoothness = myrt::make_float_param();
-  auto sunion = myrt::sdfs::smooth_union(union_smoothness);
-  sunion->set_lhs(sphere1);
-  sunion->set_rhs(sphere2);
+  myrt::sdfs::smooth_union unite_1_2;
+  unite_1_2.set_left(unite_torus_fractal).set_right(sphere2);
 
-  auto soff = myrt::sdfs::translate(myrt::make_vec3_param());
-  auto soff2 = myrt::sdfs::translate(myrt::make_vec3_param());
+  myrt::sdfs::smooth_union unite_12_3;
+  unite_12_3.set_left(unite_1_2).set_right(sphere3);
 
-  sphere1->set_parent(soff);
-  soff2->set_parent(soff);
-  sphere2->set_parent(soff2);
+  myrt::sdf_host host(unite_12_3.get_pointer());
 
-  sdf_host host(sunion);
-  host.set_value(sphere_radius, 2.0);
-  host.set_value(union_smoothness, 0.2);
-  host.set_value(box_size, rnu::vec3(1, 1, 1));
-  host.set_value(material, 0);
-  host.set_value(material2, 1);
+  // Step 2: set parameter values
+  torus1.set(myrt::sdfs::torus::material, host, 0);
+  sphere2.set(myrt::sdfs::sphere::material, host, 1);
+  sphere3.set(myrt::sdfs::sphere::material, host, 2);
+  fractal.set(myrt::sdfs::menger_fractal::material, host, 3);
+  torus1.set(myrt::sdfs::torus::radius_small, host, 0.3f);
+  torus1.set(myrt::sdfs::torus::radius_large, host, 1.2f);
+  sphere2.set(myrt::sdfs::sphere::radius, host, 0.8f);
+  sphere3.set(myrt::sdfs::sphere::radius, host, 1.3f);
+  fractal.set(myrt::sdfs::menger_fractal::size, host, rnu::vec3(1, 1, 1));
+  torus1_top.set(myrt::sdfs::translate::offset, host, rnu::vec3(0.8, 1.9, 0));
+  fractal_offset.set(myrt::sdfs::translate::offset, host, rnu::vec3(1.9, 2.1, 0));
+  sphere2_middle.set(myrt::sdfs::translate::offset, host, rnu::vec3(0, 0.95, 0));
+  sphere3_bottom.set(myrt::sdfs::translate::offset, host, rnu::vec3(0, -0.6, 0));
+  unite_1_2.set(myrt::sdfs::smooth_union::factor, host, 0.1f);
+  unite_12_3.set(myrt::sdfs::smooth_union::factor, host, 0.1f);
 
-  auto val = host.get_value<rnu::vec3>(box_size);
-
-  std::string str;
+  std::string str = "float buf[" + std::to_string(host.buf.size()) + "] = float[" + std::to_string(host.buf.size()) + "](";
   for (auto const& el : host.buf)
-    str += std::to_string(el) + ", ";
+    str += std::to_string(el) + ",";
+  if(!host.buf.empty())
+    str.pop_back();
+  str += ");\n" + host.glsl_string;
   // todo: "generate aabbs?"
   //  -> add to bvh?
   //  -> aabb per sdf?
@@ -178,8 +123,13 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
   myrt::scene scene;
   myrt::pathtracer pathtracer;
   rnu::cameraf camera(rnu::vec3{ 0.0f, 0.0f, -15.f });
-  auto const objects = load_object_file(scene, "plane.obj");
+  auto objects = load_object_file(scene, "podium.obj");
   auto [cubemap, cube_sampler] = load_cubemap();
+
+  bool cubemap_enabled = false;
+  bool rr_enabled = false;
+  float lens_radius = 100.f;
+  int bounces_per_iteration = 8;
 
   for (auto frame : myrt::gl::next_frame(*window)) {
     if (stop_token.stop_requested())
@@ -209,9 +159,81 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
     pathtracer.set_view(view_matrix);
     pathtracer.set_projection(proj_matrix);
     pathtracer.set_focus(focus);
-    pathtracer.set_enable_russian_roulette(true);
-    pathtracer.set_cubemap(myrt::pathtracer::cubemap_texture{ cubemap, cube_sampler });
     pathtracer.sample_to_display(scene, window->getSize().x, window->getSize().y);
+
+
+    ImGui::Begin("Settings");
+    ImGui::Text("Samples: %d (%.00f sps)", pathtracer.sample_count(), 1.f / frame.delta_time.count());
+    if (ImGui::Button("Restart Sampling"))
+      pathtracer.invalidate_counter();
+    if (ImGui::Checkbox("Enable Cubemap", &cubemap_enabled))
+    {
+      if (cubemap_enabled)
+        pathtracer.set_cubemap(myrt::pathtracer::cubemap_texture{ cubemap, cube_sampler });
+      else
+        pathtracer.set_cubemap(std::nullopt);
+    }
+   /* if (ImGui::Checkbox("Enable Bokeh", &bokeh_enabled))
+    {
+      if (bokeh_enabled)
+        pathtracer.set_bokeh_texture(bokeh);
+      else
+        pathtracer.set_bokeh_texture(std::nullopt);
+    }*/
+    if (ImGui::Checkbox("Enable Russian Roulette", &rr_enabled))
+    {
+      pathtracer.set_enable_russian_roulette(rr_enabled);
+    }
+    //ImGui::DragInt("Samples Per Iteration", &samples_per_iteration, 0.1f, 1, 10);
+    if (ImGui::DragInt("Bounces Per Iteration", &bounces_per_iteration, 0.1f, 1, 50))
+    {
+      pathtracer.set_max_bounces(bounces_per_iteration);
+    }
+    if (ImGui::DragFloat("Lens Radius", &lens_radius, 0.1f, 0.0f, 1000.0f))
+    {
+      pathtracer.set_lens_radius(lens_radius);
+    }
+    //ImGui::Checkbox("Enable Animation", &animate);
+    if (ImGui::Button("Reload Shaders"))
+    {
+      pathtracer.reload_shaders();
+    }
+    ImGui::End();
+
+    if (ImGui::Begin("Materials")) {
+
+      for (auto& mat : scene.materials())
+      {
+        ImGui::PushID(static_cast<const void*>(mat.get()));
+        auto mat_info = scene.info_of(mat);
+
+        if (ImGui::DragFloat("material.roughness", &mat_info.roughness, 0.01f, 0.0f, 1.0f))
+          scene.update_material(mat, mat_info);
+        if (ImGui::DragFloat("material.ior", &mat_info.ior, 0.01f, 0.01f, 100.0f))
+          scene.update_material(mat, mat_info);
+        if (ImGui::DragFloat("material.metallic", &mat_info.metallic, 0.01f, 0.0f, 1.0f))
+          scene.update_material(mat, mat_info);
+        if (ImGui::DragFloat("material.transmission", &mat_info.transmission, 0.01f, 0.0f, 1.0f))
+          scene.update_material(mat, mat_info);
+
+        ImGui::Separator();
+        ImGui::PopID();
+      }
+
+    }
+    ImGui::End();
+
+    if (ImGui::Begin("Objects"))
+    {
+      for (auto& obj : objects)
+      {
+        ImGui::PushID(&obj);
+        ImGui::Text("%s", obj.name.c_str());
+        ImGui::Checkbox("Show", &obj.show);
+        ImGui::PopID();
+      }
+    }
+    ImGui::End();
   }
 }
 
@@ -245,7 +267,7 @@ std::vector<myrt::geometric_object> load_object_file(myrt::scene& scene, std::fi
       }
     }
   };
-  char input_file_buf[256] = "plane.obj";
+  char input_file_buf[256] = "podium.obj";
   load_obj(res_dir / input_file_buf);
   return objects;
 }

@@ -117,7 +117,7 @@ int main(int argc, char** argv)
         }
       }
     };
-    char input_file_buf[256] = "plane.obj";
+    char input_file_buf[256] = "podium.obj";
     load_obj(res_dir / input_file_buf);
 
     auto [cubemap, cube_sampler] = load_cubemap();
@@ -277,8 +277,8 @@ int main(int argc, char** argv)
           ImGui::PopID();
         }
 
-        ImGui::End();
       }
+        ImGui::End();
 
       if (ImGui::Begin("Objects"))
       {
@@ -287,23 +287,10 @@ int main(int argc, char** argv)
           ImGui::PushID(&obj);
           ImGui::Text("%s", obj.name.c_str());
           ImGui::Checkbox("Show", &obj.show);
-          ImGui::PopID(); for (auto const& event : co_poll(window))
-          {
-            ImGui::SFML::ProcessEvent(event);
-            switch (event.get().type)
-            {
-            case sf::Event::Closed:
-              close = true;
-              break;
-            case sf::Event::MouseWheelScrolled:
-              if (!ImGui::GetIO().WantCaptureMouse)
-                focus += 0.2f * event.get().mouseWheelScroll.delta;
-              break;
-            }
-          }
+          ImGui::PopID();
         }
-        ImGui::End();
       }
+        ImGui::End();
 
       glBindVertexArray(0);
       glBindSampler(0, 0);
