@@ -115,7 +115,14 @@ bool any_hit(vec3 ray_origin, vec3 ray_direction, float max_distance)
     bool hits = bvh_traverse_global(0, 0, ray_origin, ray_direction, max_distance);
 
     if (!hits)
-        hits = march_sdf(ray_origin, ray_direction, max_distance, true).hits;
+    {
+      for (int i = 0; i < sdfs.length(); ++i)
+      {
+        sdf_current = i;
+        if (march_sdf(ray_origin, ray_direction, max_distance, true).hits)
+          return true;
+      }
+    }
     return hits;
 }
 
@@ -130,9 +137,18 @@ hit_t nearest_hit(vec3 ray_origin, vec3 ray_direction, float max_distance)
 
     hit.t = traversal.global_t;
 
-    hit_t marched = march_sdf(ray_origin, ray_direction, hit.hits ? hit.t : max_distance, false);
-    if (marched.hits)
-        return marched;
+    bool hit_marched = false;
+    for (int i = 0; i < sdfs.length(); ++i)
+    {
+      sdf_current = i;
+      hit_t h = march_sdf(ray_origin, ray_direction, hit.hits ? hit.t : max_distance, false);
+      if (h.hits && h.t < hit.t) {
+        hit = h;
+        hit_marched = true;
+      }
+    }
+    if (hit_marched)
+      return hit;
 
     vec2 hit_bary = traversal.global_barycentric;
     uint hit_triangle = traversal.global_hit_index;

@@ -58,16 +58,7 @@ namespace myrt
         glsp::definition sdf_inject;
         auto const& sdfs = scene.sdfs();
         sdf_inject.name = "MYRT_INJECT_SDF_MAP_CODE_HERE";
-        if (!sdfs.empty())
-        {
-          sdf_inject.info.replacement = scene.lock_sdf_host(sdfs[0]).glsl_string;
-          // Todo: switch...
-
-        }
-        else
-        {
-          sdf_inject.info.replacement = "float map(vec3 p, inout _MT _mt) { return 1.0 / 0.0; }";
-        }
+        sdf_inject.info.replacement = scene.get_sdf_assembler().get_assembled_glsl();
 
         const auto fragment_shader = glsp::preprocess_file(res_dir / "../src/glsl/pathtracer.frag", {}, {
             glsp::definition("MYRT_POINT_TYPE", detail::glsl::bvh_point_type),

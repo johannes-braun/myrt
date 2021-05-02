@@ -7,51 +7,14 @@
 #include <stb_image.h>
 
 const static std::filesystem::path res_dir = "../../../res";
-/*
-*
-* #define MAT material_info_t
-* MAT load_material(int i) { return mat_buf[i];}
-* MAT mix_material(MAT a, MAT b, float fac) { return ...; }
-
-float prim(vec3 p, inout MAT in_material)
-{
-  // code...
-  material = load_material(in_param0);
-}
-
-float op(float d0, float d1, MAT m0, MAT m1, out MAT omat)
-{
-
-}
-
-map(vec3, out MAT mat)
-{
-
-}
-
-*/
 
 void render_function(std::stop_token stop_token, sf::RenderWindow* window);
 std::vector<myrt::geometric_object> load_object_file(myrt::scene& scene, std::filesystem::path const& path, float import_scale = 1.0f);
 std::pair<GLuint, GLuint> load_cubemap();
-
-
+GLuint load_bokeh();
+float focus = 10.0f;
 
 int main(int argc, char** argv) {
-  /*std::string str = "float buf[" + std::to_string(host.buf.size()) + "] = float[" + std::to_string(host.buf.size()) + "](";
-  for (auto const& el : host.buf)
-    str += std::to_string(el) + ",";
-  if(!host.buf.empty())
-    str.pop_back();
-  str += ");\n" + host.glsl_string;*/
-  // todo: "generate aabbs?"
-  //  -> add to bvh?
-  //  -> aabb per sdf?
-  //  -> 
-  // todo: scene.create_sdf() (from struct/json/whatever)
-  // todo: pathtracer.invalidate_shader(), wenn sdf changed.
-  // todo: scene.set_sdf_parameter(shared_ptr<param>, Ty&& value);
-
   sf::ContextSettings settings;
   settings.majorVersion = 4;
   settings.minorVersion = 6;
@@ -64,71 +27,54 @@ int main(int argc, char** argv) {
 
   for (auto event : myrt::sfml::poll_event(window)) {
 
+    switch (event.get().type) {
+    case sf::Event::MouseWheelScrolled:
+      if (!ImGui::GetIO().WantCaptureMouse)
+        focus += 0.2f * event.get().mouseWheelScroll.delta;
+      break;
+    }
   }
   render_thread.request_stop();
+}
+
+std::mt19937 twister;
+myrt::scene::material_pointer create_random_material(myrt::scene& scene)
+{
+  std::uniform_real_distribution<float> const distribution(0.0, 1.0);
+  return scene.push_material({
+            .albedo_rgba = rnu::vec4ui8(distribution(twister) * 255, distribution(twister) * 255, distribution(twister) * 255, 255),
+            .ior = distribution(twister) + 1.0f,
+            .roughness = distribution(twister),
+            .metallic = distribution(twister)
+    });
 }
 
 void render_function(std::stop_token stop_token, sf::RenderWindow* window)
 {
   myrt::gl::start(*window);
 
-  // Step 1: build sdf scene
-  myrt::sdfs::torus torus1;
-  myrt::sdfs::sphere sphere2;
-  myrt::sdfs::sphere sphere3;
-  myrt::sdfs::menger_fractal fractal;
-
-  myrt::sdfs::translate fractal_offset;
-  myrt::sdfs::translate torus1_top;
-  myrt::sdfs::translate sphere2_middle;
-  myrt::sdfs::translate sphere3_bottom;
-
-  fractal.transform(fractal_offset);
-  torus1.transform(torus1_top);
-  sphere2.transform(sphere2_middle);
-  sphere3.transform(sphere3_bottom);
-
-  myrt::sdfs::hard_union unite_torus_fractal;
-  unite_torus_fractal.set_left(torus1).set_right(fractal);
-
-  myrt::sdfs::smooth_union unite_1_2;
-  unite_1_2.set_left(unite_torus_fractal).set_right(sphere2);
-
-  myrt::sdfs::smooth_union unite_12_3;
-  unite_12_3.set_left(unite_1_2).set_right(sphere3);
-
-  float focus = 10.0f;
   myrt::scene scene;
   myrt::pathtracer pathtracer;
   rnu::cameraf camera(rnu::vec3{ 0.0f, 0.0f, -15.f });
   auto objects = load_object_file(scene, "podium.obj");
   auto [cubemap, cube_sampler] = load_cubemap();
+  auto bokeh = load_bokeh();
+
+  myrt::sdfs::vertical_capsule capsule(3.f, 0.5f);
+  myrt::sdfs::sphere sphere(1.f);
+  sphere.transform(myrt::sdfs::translate(rnu::vec3(0.5, 0, 0.5)).transform(myrt::sdfs::mirror_x{}));
+
+  myrt::sdfs::smooth_union unite(0.3f);
+  unite.apply(sphere, capsule);
 
   myrt::sdf_object abstract_art_sdf;
   abstract_art_sdf.name = "Abstract Art";
-  abstract_art_sdf.sdf = scene.push_sdf(myrt::sdf_info_t{ .root = unite_12_3.get_pointer() });
-
-
-  auto& host = scene.lock_sdf_host(abstract_art_sdf.sdf);
-  // Step 2: set parameter values
-  torus1.set(myrt::sdfs::torus::material, host, 0);
-  sphere2.set(myrt::sdfs::sphere::material, host, 1);
-  sphere3.set(myrt::sdfs::sphere::material, host, 2);
-  fractal.set(myrt::sdfs::menger_fractal::material, host, 3);
-  torus1.set(myrt::sdfs::torus::radius_small, host, 0.3f);
-  torus1.set(myrt::sdfs::torus::radius_large, host, 1.2f);
-  sphere2.set(myrt::sdfs::sphere::radius, host, 0.8f);
-  sphere3.set(myrt::sdfs::sphere::radius, host, 1.3f);
-  fractal.set(myrt::sdfs::menger_fractal::size, host, rnu::vec3(1, 1, 1));
-  torus1_top.set(myrt::sdfs::translate::offset, host, rnu::vec3(0.8, 1.9, 0));
-  fractal_offset.set(myrt::sdfs::translate::offset, host, rnu::vec3(1.9, 2.1, 0));
-  sphere2_middle.set(myrt::sdfs::translate::offset, host, rnu::vec3(0, 0.95, 0));
-  sphere3_bottom.set(myrt::sdfs::translate::offset, host, rnu::vec3(0, -0.6, 0));
-  unite_1_2.set(myrt::sdfs::smooth_union::factor, host, 0.1f);
-  unite_12_3.set(myrt::sdfs::smooth_union::factor, host, 0.1f);
-
+  abstract_art_sdf.sdf = scene.push_sdf(myrt::sdf_info_t{ .root = unite.get_pointer() });
+  abstract_art_sdf.set(capsule.get_parameter(capsule.material), 1);
+  abstract_art_sdf.set(sphere.get_parameter(sphere.material), 2);
 
   bool cubemap_enabled = false;
+  bool bokeh_enabled = false;
   bool rr_enabled = false;
   float lens_radius = 100.f;
   int bounces_per_iteration = 8;
@@ -170,18 +116,18 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
 
     if (ImGui::Begin("SDF Playground"))
     {
-      if (ImGui::DragFloat("Sphere radius", &pg_sphere_radius, 0.1f, 0.1f, 100.f))
+      if (ImGui::DragFloat("Sphere radius", &pg_sphere_radius, 0.01f, 0.1f, 100.f))
       {
-        scene.set_parameter(abstract_art_sdf.sdf, sphere3.get_parameter(sphere3.radius), pg_sphere_radius);
+        scene.set_parameter(abstract_art_sdf.sdf, sphere.get_parameter(sphere.radius), pg_sphere_radius);
       }
       if (ImGui::DragFloat("Smoothness 1", &pg_smoothness1, 0.01f, 0.0f, 100.0f))
       {
-        scene.set_parameter(abstract_art_sdf.sdf, unite_12_3.get_parameter(unite_12_3.factor), pg_smoothness1);
+        scene.set_parameter(abstract_art_sdf.sdf, unite.get_parameter(unite.factor), pg_smoothness1);
       }
-      if (ImGui::DragFloat2("Torus Size", torus_size.data(), 0.01f, 0.0f, 100.0f))
+      if (ImGui::DragFloat2("Capsule Size", torus_size.data(), 0.01f, 0.0f, 100.0f))
       {
-        scene.set_parameter(abstract_art_sdf.sdf, torus1.get_parameter(torus1.radius_small), torus_size[0]);
-        scene.set_parameter(abstract_art_sdf.sdf, torus1.get_parameter(torus1.radius_large), torus_size[1]);
+        scene.set_parameter(abstract_art_sdf.sdf, capsule.get_parameter(capsule.height), torus_size[0]);
+        scene.set_parameter(abstract_art_sdf.sdf, capsule.get_parameter(capsule.radius), torus_size[1]);
       }
     }
     ImGui::End();
@@ -197,18 +143,17 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
       else
         pathtracer.set_cubemap(std::nullopt);
     }
-   /* if (ImGui::Checkbox("Enable Bokeh", &bokeh_enabled))
-    {
-      if (bokeh_enabled)
-        pathtracer.set_bokeh_texture(bokeh);
-      else
-        pathtracer.set_bokeh_texture(std::nullopt);
-    }*/
+     if (ImGui::Checkbox("Enable Bokeh", &bokeh_enabled))
+     {
+       if (bokeh_enabled)
+         pathtracer.set_bokeh_texture(bokeh);
+       else
+         pathtracer.set_bokeh_texture(std::nullopt);
+     }
     if (ImGui::Checkbox("Enable Russian Roulette", &rr_enabled))
     {
       pathtracer.set_enable_russian_roulette(rr_enabled);
     }
-    //ImGui::DragInt("Samples Per Iteration", &samples_per_iteration, 0.1f, 1, 10);
     if (ImGui::DragInt("Bounces Per Iteration", &bounces_per_iteration, 0.1f, 1, 50))
     {
       pathtracer.set_max_bounces(bounces_per_iteration);
@@ -217,7 +162,6 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
     {
       pathtracer.set_lens_radius(lens_radius);
     }
-    //ImGui::Checkbox("Enable Animation", &animate);
     if (ImGui::Button("Reload Shaders"))
     {
       pathtracer.reload_shaders(scene);
@@ -240,6 +184,12 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
         if (ImGui::DragFloat("material.transmission", &mat_info.transmission, 0.01f, 0.0f, 1.0f))
           scene.update_material(mat, mat_info);
 
+        rnu::vec4 col = mat_info.albedo_rgba / 255.f;
+        if (ImGui::ColorEdit4("Color", col.data())) {
+          mat_info.albedo_rgba = col * 255.f;
+          scene.update_material(mat, mat_info);
+        }
+
         ImGui::Separator();
         ImGui::PopID();
       }
@@ -254,6 +204,12 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
         ImGui::PushID(&obj);
         ImGui::Text("%s", obj.name.c_str());
         ImGui::Checkbox("Show", &obj.show);
+        ImGui::PopID();
+      }
+      {
+        ImGui::PushID(&abstract_art_sdf);
+        ImGui::Text("%s", abstract_art_sdf.name.c_str());
+        ImGui::Checkbox("Show", &abstract_art_sdf.show);
         ImGui::PopID();
       }
     }
@@ -294,6 +250,17 @@ std::vector<myrt::geometric_object> load_object_file(myrt::scene& scene, std::fi
   char input_file_buf[256] = "podium.obj";
   load_obj(res_dir / input_file_buf);
   return objects;
+}
+
+GLuint load_bokeh() {
+  GLuint bokeh{};
+  glCreateTextures(GL_TEXTURE_2D, 1, &bokeh);
+  int bw{}, bh{}, bc{};
+  stbi_uc* img_data = stbi_load((res_dir / "bokeh_hexagon.jpg").string().c_str(), &bw, &bh, &bc, 3);
+  glTextureStorage2D(bokeh, 1, GL_RGB8, bw, bh);
+  glTextureSubImage2D(bokeh, 0, 0, 0, bw, bh, GL_RGB, GL_UNSIGNED_BYTE, img_data);
+  stbi_image_free(img_data);
+  return bokeh;
 }
 
 std::pair<GLuint, GLuint> load_cubemap()

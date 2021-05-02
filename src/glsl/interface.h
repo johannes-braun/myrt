@@ -17,6 +17,13 @@ struct drawable_geometry_t
     int pad[2];
 };
 
+struct drawable_sdf_t {
+  mat4 transformation;
+  mat4 inverse_transformation;
+  int sdf_index;
+  int pad[3];
+};
+
 struct material_info_t
 {
     color_rgba_t albedo_rgba_unorm;
@@ -58,6 +65,7 @@ layout(binding = 6, std430) restrict readonly buffer BVHGlobal { bvh_node_t glob
 layout(binding = 7, std430) restrict readonly buffer BVHIndicesGlobal { uint global_bvh_indices[]; };
 layout(binding = 8, std430) restrict readonly buffer Materials { material_info_t materials[]; };
 layout(binding = 9, std430) restrict readonly buffer SDFData { float sdf_buffer[]; };
+layout(binding = 10, std430) restrict readonly buffer SDFDrawables { drawable_sdf_t sdfs[]; };
 
 // UNIFORMS
 layout(location = 0) uniform mat4 u_inv_proj;

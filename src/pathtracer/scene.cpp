@@ -18,7 +18,7 @@ namespace myrt
 
     struct sdf_t {
       sdf_info_t info;
-      sdf_host host;
+      sdf_glsl_assembly assembly;
       scene* scene = nullptr;
       int index = 0;
       size_t buffer_offset = 0;
@@ -45,6 +45,7 @@ namespace myrt
         glDeleteBuffers(1, &m_gl_objects.drawable_buffer);
         glDeleteBuffers(1, &m_gl_objects.materials_buffer);
         glDeleteBuffers(1, &m_gl_objects.sdf_data_buffer);
+        glDeleteBuffers(1, &m_gl_objects.sdf_drawable_buffer);
         glDeleteBuffers(1, &m_gl_objects.global_bvh_nodes_buffer);
         glDeleteBuffers(1, &m_gl_objects.global_bvh_indices_buffer);
         for (auto const& geometry : m_available_geometries)
@@ -93,7 +94,7 @@ namespace myrt
     void scene::set_material_parameter(const sdf_pointer& sdf, std::shared_ptr<int_param> const& parameter, material_pointer material)
     {
       m_sdf_buffer_changed = true;
-      lock_sdf_host(sdf).set_value(parameter, material->index);
+      sdf->assembly.set_value(m_sdf_parameter_buffer.data(), parameter, material->index);
     }
     void scene::erase_material_indirect(const material_pointer& material) {
         m_erase_on_prepare_materials.push_back(material);
@@ -119,10 +120,11 @@ namespace myrt
             m_available_materials.pop_back();
         }
     }
-    sdf_host& scene::lock_sdf_host(const sdf_pointer& sdf)
+
+    void scene::set_parameter(const sdf_pointer& sdf, std::shared_ptr<sdf_parameter> const& parameter, float* value_ptr)
     {
-      sdf->host.override_buffer_ptr(m_sdf_parameter_buffer.data() + sdf->buffer_offset);
-      return sdf->host;
+      m_sdf_buffer_changed = true;
+      sdf->assembly.set_value(m_sdf_parameter_buffer.data(), parameter, value_ptr);
     }
     void scene::erase_geometry_direct(const geometry_pointer& geometry)
     {
@@ -184,15 +186,30 @@ namespace myrt
 
     scene::sdf_pointer scene::push_sdf(sdf_info_t info)
     {
+      auto const assembly = m_sdf_assembler.append(info.root);
+
+      //m_sdf_buffer_changed = true;
       m_sdfs_changed = true;
       auto const& ptr = m_available_sdfs.emplace_back(std::make_unique<sdf_t>());
       ptr->index = static_cast<int>(m_available_sdfs.size()) - 1;
       ptr->info = std::move(info);
       ptr->scene = this;
-      ptr->host = sdf_host(ptr->info.root, false);
+      ptr->assembly = std::move(assembly);
       ptr->buffer_offset = m_sdf_parameter_buffer.size();
-      m_sdf_parameter_buffer.resize(ptr->host.buffer_size);
+      m_sdf_parameter_buffer.resize(m_sdf_parameter_buffer.size() + ptr->assembly.buffer_blocks_required);
+      ptr->assembly.initialize_from_default(m_sdf_parameter_buffer.data(), ptr->info.root);
+
       return ptr;
+    }
+
+    sdf_glsl_assembly const& scene::get_sdf_assembly(const sdf_t* sdf)
+    {
+      return sdf->assembly;
+    }
+
+    sdf_glsl_assembly& scene::get_sdf_assembly(sdf_t* sdf)
+    {
+      return sdf->assembly;
     }
 
     scene::scene() {
@@ -204,6 +221,7 @@ namespace myrt
         glCreateBuffers(1, &m_gl_objects.drawable_buffer);
         glCreateBuffers(1, &m_gl_objects.materials_buffer);
         glCreateBuffers(1, &m_gl_objects.sdf_data_buffer);
+        glCreateBuffers(1, &m_gl_objects.sdf_drawable_buffer);
         glCreateBuffers(1, &m_gl_objects.global_bvh_nodes_buffer);
         glCreateBuffers(1, &m_gl_objects.global_bvh_indices_buffer);
 
@@ -234,6 +252,19 @@ namespace myrt
             }
         }
         return geom_hash ^ mat_hash ^ tf_hash;
+    }
+
+    [[nodiscard]] size_t hash(sdf_t const* sdf, rnu::mat4 const& transformation) noexcept
+    {
+      size_t const sdf_hash = std::hash<decltype(sdf)>()(sdf);
+      size_t tf_hash = 0;
+      for (size_t c = 0; c < transformation.columns; ++c)
+      {
+        for (size_t r = 0; r < transformation.rows; ++r) {
+          tf_hash ^= std::hash<float>()(transformation.at(c, r));
+        }
+      }
+      return sdf_hash ^ tf_hash;
     }
 
     void scene::enqueue(geometry_t const* geometry, material_t const* material, rnu::mat4 const& transformation)
@@ -316,9 +347,18 @@ namespace myrt
             glNamedBufferData(m_gl_objects.drawable_buffer, detail::vector_bytes(m_drawables), m_drawables.data(), GL_DYNAMIC_DRAW);
             result.drawables_changed = true;
         }
+        if (!m_sdf_drawables.empty() && (m_current_sdf_drawable_hash != m_last_sdf_drawable_hash))
+        {
+          m_last_sdf_drawable_hash = m_current_sdf_drawable_hash;
+          glNamedBufferData(m_gl_objects.sdf_drawable_buffer, detail::vector_bytes(m_sdf_drawables), m_sdf_drawables.data(), GL_DYNAMIC_DRAW);
+          result.drawables_changed = true;
+          m_sdf_buffer_changed = true;
+        }
         m_drawables.clear();
+        m_sdf_drawables.clear();
         m_drawable_aabbs.clear();
         m_current_drawable_hash = 0;
+        m_current_sdf_drawable_hash = 0;
         if (m_materials_changed)
         {
             m_materials_changed = false;
@@ -370,6 +410,11 @@ namespace myrt
 
     void scene::enqueue(sdf_t const* sdf, rnu::mat4 const& transformation)
     {
+      auto& info = m_sdf_drawables.emplace_back();
+      info.transformation = transformation;
+      info.inverse_transformation = inverse(transformation);
+      info.sdf_index = sdf->index;
+      m_current_sdf_drawable_hash ^= hash(sdf, transformation);
     }
 
     void scene::enqueue(const sdf_pointer& sdf, rnu::mat4 const& transformation)
@@ -389,6 +434,7 @@ namespace myrt
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, buffer_binding_global_bvh_indices, m_gl_objects.global_bvh_indices_buffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, buffer_binding_materials, m_gl_objects.materials_buffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, buffer_binding_sdf_data, m_gl_objects.sdf_data_buffer);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, buffer_binding_sdf_drawable, m_gl_objects.sdf_drawable_buffer);
         return result;
     }
 
@@ -405,5 +451,9 @@ namespace myrt
       {
         sdf->scene->enqueue(sdf, transformation);
       }
+    }
+    scene* sdf_object::get_scene()
+    {
+      return sdf->scene;
     }
 }

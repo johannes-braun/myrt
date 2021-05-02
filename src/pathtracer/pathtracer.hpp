@@ -19,7 +19,7 @@ namespace myrt
         };
 
         constexpr static auto max_uniform_distribution_value = 0x0ffffffu;
-        constexpr static auto random_number_count = 1<<15;
+        constexpr static auto random_number_count = 1<<10;
 
         ~pathtracer();
         void sample_to_framebuffer(scene& scene, GLuint target_framebuffer, GLenum attachment);

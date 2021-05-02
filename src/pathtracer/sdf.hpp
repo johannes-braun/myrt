@@ -6,6 +6,7 @@
 #include <memory>
 #include <sstream>
 #include <iomanip>
+#include <algorithm>
 
 namespace myrt
 {
@@ -49,9 +50,8 @@ namespace myrt
     sdf_parameter(std::shared_ptr<sdf_parameter_type> type)
       : type(std::move(type)) {
       _value_links.resize(this->type->buffer_blocks);
+      _default_value.resize(this->type->buffer_blocks);
     }
-
-    std::shared_ptr<sdf_parameter_type> type;
 
     sdf_parameter_link link_value_block(size_t block, std::shared_ptr<sdf_parameter> other, size_t other_block) {
       sdf_parameter_link last = _value_links[block];
@@ -71,7 +71,18 @@ namespace myrt
       return _value_links[block];
     }
 
+    std::vector<float> const& get_default_value() const {
+      return _default_value;
+    }
+    void set_default_value(std::span<float const> data) {
+      if (data.size() != type->buffer_blocks)
+        throw std::invalid_argument("Data size not suitable for this parameter");
+      _default_value.assign(data.begin(), data.end());
+    }
+
+    std::shared_ptr<sdf_parameter_type> type;
   private:
+    std::vector<float> _default_value;
     std::vector<sdf_parameter_link> _value_links;
   };
 
@@ -128,19 +139,19 @@ namespace myrt
 
     std::vector<std::shared_ptr<sdf_parameter>> params;
     std::shared_ptr<sdf_type> type;
-    std::shared_ptr<sdf_instruction> child;
+    std::weak_ptr<sdf_instruction> joint_element;
   };
 
   struct sdf_prim : sdf_instruction, std::enable_shared_from_this<sdf_prim> {
     sdf_prim(std::shared_ptr<sdf_type> type) : sdf_instruction(type) {}
 
     void set_parent(std::shared_ptr<sdf_instruction> p) {
-      parent = p;
+      child = p;
       if (p != nullptr)
-        p->child = shared_from_this();
+        p->joint_element = shared_from_this();
     }
 
-    std::weak_ptr<sdf_instruction> parent;
+    std::shared_ptr<sdf_instruction> child;
   };
 
   struct sdf_op : sdf_instruction, std::enable_shared_from_this<sdf_op> {
@@ -149,29 +160,29 @@ namespace myrt
     void set_lhs(std::shared_ptr<sdf_instruction> l) {
       lhs = l;
       if (l != nullptr)
-        l->child = shared_from_this();
+        l->joint_element = shared_from_this();
     }
 
     void set_rhs(std::shared_ptr<sdf_instruction> r) {
       rhs = r;
       if (r != nullptr)
-        r->child = shared_from_this();
+        r->joint_element = shared_from_this();
     }
 
-    std::weak_ptr<sdf_instruction> lhs;
-    std::weak_ptr<sdf_instruction> rhs;
+    std::shared_ptr<sdf_instruction> lhs;
+    std::shared_ptr<sdf_instruction> rhs;
   };
 
   struct sdf_mod : sdf_instruction, std::enable_shared_from_this<sdf_mod> {
     sdf_mod(std::shared_ptr<sdf_type> type) : sdf_instruction(type) {}
 
     void set_parent(std::shared_ptr<sdf_instruction> p) {
-      parent = p;
+      child = p;
       if (p != nullptr)
-        p->child = shared_from_this();
+        p->joint_element = shared_from_this();
     }
 
-    std::weak_ptr<sdf_instruction> parent;
+    std::shared_ptr<sdf_instruction> child;
   };
 
   inline std::shared_ptr<sdf_type> sdf_create_type(sdf_type::type type, std::string_view glsl, std::span<std::shared_ptr<sdf_parameter_type> const> params)
@@ -323,105 +334,110 @@ namespace myrt
     return param_name;
   }
 
-  inline std::string generate_glsl(
-    std::shared_ptr<sdf_instruction> const& root,
-    std::stringstream& functions,
-    std::stringstream& distance_function,
-    std::stringstream& mul,
-    std::unordered_map<size_t, int>& hash_reducers,
-    int& hash_counter,
-    std::unordered_set<size_t>& used_objects,
-    std::unordered_set<sdf_parameter_type*>& used_param_types,
-    std::unordered_map<size_t, int>& buffer_offsets,
-    int& current_offset)
+  struct sdf_build_cache_t
   {
-    const auto hash = hash_reduced(root->type, hash_reducers, hash_counter);
+    std::stringstream functions;
+    std::stringstream mul = std::stringstream("1.0");
+    std::stringstream distance_function;
+    std::unordered_set<size_t> used_objects;
+    std::unordered_set<size_t> used_functions;
+    std::unordered_set<sdf_parameter_type*> used_param_types;
+    std::unordered_map<size_t, int> hash_reducers;
+    int hash_counter = 0;
+    int current_offset = 0;
+    std::unordered_map<size_t, int> buffer_offsets;
+  };
+
+  inline std::string generate_glsl_impl(
+    std::shared_ptr<sdf_instruction> const& root,
+    sdf_build_cache_t& cache)
+  {
+    const auto hash = hash_reduced(root->type, cache.hash_reducers, cache.hash_counter);
     const auto fun_name = "_X" + to_hex_string(hash);
-    if (used_objects.emplace(hash).second) {
+    if (cache.used_functions.emplace(hash).second) {
 
       for (auto const& par : root->type->type_params)
       {
-        if (used_param_types.emplace(par.get()).second)
-          functions << par->function;
+        if (cache.used_param_types.emplace(par.get()).second)
+          cache.functions << par->function;
       }
 
       switch (root->type->instruction_type)
       {
       case sdf_type::type::prim:
-        functions << "float " << fun_name << "(vec3 _L, inout _MT _mt";
+        cache.functions << "float " << fun_name << "(vec3 _L, inout _MT _mt";
         break;
       case sdf_type::type::op:
-        functions << "float " << fun_name << "(float _D0, float _D1, _MT _mt0, _MT _mt1, inout _MT _mt";
+        cache.functions << "float " << fun_name << "(float _D0, float _D1, _MT _mt0, _MT _mt1, inout _MT _mt";
         break;
       case sdf_type::type::mod:
-        functions << "vec3 " << fun_name << "(vec3 _L, inout float _M";
+        cache.functions << "vec3 " << fun_name << "(vec3 _L, inout float _M";
         break;
       }
 
       int i = 0;
       for (auto const& par : root->type->type_params)
-        functions << "," << par->type_name << " _P" << i++ << "";
+        cache.functions << "," << par->type_name << " _P" << i++ << "";
 
-      functions << "){" << root->type->glsl_string << "\n;}";
+      cache.functions << "){" << root->type->glsl_string << "\n;}";
     }
 
     switch (root->type->instruction_type)
     {
     case sdf_type::type::prim:
     {
-      auto h = hash_reduced(root, hash_reducers, hash_counter);
+      auto h = hash_reduced(root, cache.hash_reducers, cache.hash_counter);
       auto const dname = "p" + to_hex_string(h);
-      if (used_objects.emplace(h).second) {
-        int off = current_offset;
+      if (cache.used_objects.emplace(h).second) {
+        int off = cache.current_offset;
         std::vector<std::string> param_names;
         for (auto const& par : root->params)
         {
           auto param_name = resolve_parameter(par,
-            functions,
-            distance_function,
-            hash_reducers,
-            hash_counter,
-            used_objects,
-            used_param_types,
-            buffer_offsets,
-            current_offset);
+            cache.functions,
+            cache.distance_function,
+            cache.hash_reducers,
+            cache.hash_counter,
+            cache.used_objects,
+            cache.used_param_types,
+            cache.buffer_offsets,
+            cache.current_offset);
           param_names.push_back(std::move(param_name));
         }
         auto const p = std::static_pointer_cast<sdf_prim>(root);
         std::string in_pos = "_L";
-        if (!p->parent.expired())
+        if (p->child)
         {
-          auto parent = p->parent.lock();
-          in_pos = generate_glsl(parent, functions, distance_function, mul, hash_reducers, hash_counter, used_objects, used_param_types, buffer_offsets, current_offset);
+          in_pos = generate_glsl_impl(p->child, cache);
         }
-        distance_function << "_MT _mt" << dname << "=_mt;";
-        distance_function << "float " << dname << "=" << fun_name << "(" << in_pos << ",_mt" << dname;
+        cache.distance_function << "_MT _mt" << dname << "=_mt;";
+        cache.distance_function << "float " << dname << "=" << fun_name << "(" << in_pos << ",_mt" << dname;
 
         for (auto const& n : param_names)
-          distance_function << "," << n;
-        distance_function << ");";
+          cache.distance_function << "," << n;
+        cache.distance_function << ");";
       }
       return dname;
     }
     break;
     case sdf_type::type::op:
     {
-      auto h = hash_reduced(root, hash_reducers, hash_counter);
+      auto h = hash_reduced(root, cache.hash_reducers, cache.hash_counter);
       auto const dname = "o" + to_hex_string(h);
-      if (used_objects.emplace(h).second) {
-        int off = current_offset;
+      if (cache.used_objects.emplace(h).second) {
+        int off = cache.current_offset;
         std::vector<std::string> param_names;
         for (auto const& par : root->params)
         {
           auto param_name = resolve_parameter(par,
-            functions,
-            distance_function,
-            hash_reducers,
-            hash_counter,
-            used_objects,
-            used_param_types,
-            buffer_offsets,
-            current_offset);
+            cache.functions,
+            cache.distance_function,
+            cache.hash_reducers,
+            cache.hash_counter,
+            cache.used_objects,
+            cache.used_param_types,
+            cache.buffer_offsets,
+            cache.current_offset);
           param_names.push_back(std::move(param_name));
         }
         auto const p = std::static_pointer_cast<sdf_op>(root);
@@ -429,64 +445,61 @@ namespace myrt
         std::string in_pos2 = "_L";
         std::string in_mat1 = "_mt";
         std::string in_mat2 = "_mt";
-        if (!p->lhs.expired())
+        if (p->lhs)
         {
-          auto parent = p->lhs.lock();
-          in_pos1 = generate_glsl(parent, functions, distance_function, mul, hash_reducers, hash_counter, used_objects, used_param_types, buffer_offsets, current_offset);
+          in_pos1 = generate_glsl_impl(p->lhs, cache);
           in_mat1 = "_mt" + in_pos1;
         }
-        if (!p->rhs.expired())
+        if (p->rhs)
         {
-          auto parent = p->rhs.lock();
-          in_pos2 = generate_glsl(parent, functions, distance_function, mul, hash_reducers, hash_counter, used_objects, used_param_types, buffer_offsets, current_offset);
+          in_pos2 = generate_glsl_impl(p->rhs, cache);
           in_mat2 = "_mt" + in_pos2;
         }
-        distance_function << "_MT _mt" << dname << "=_mt;";
-        distance_function << "float " << dname << "=" << fun_name << "(" << in_pos1 << "," << in_pos2 << ", " << in_mat1 << "," << in_mat2 << ",_mt" << dname;
+        cache.distance_function << "_MT _mt" << dname << "=_mt;";
+        cache.distance_function << "float " << dname << "=" << fun_name << "(" << in_pos1 << "," << in_pos2 << ", " << in_mat1 << "," << in_mat2 << ",_mt" << dname;
 
         for (auto const& n : param_names)
-          distance_function << "," << n;
-        distance_function << ");";
+          cache.distance_function << "," << n;
+        cache.distance_function << ");";
       }
       return dname;
     }
     break;
     case sdf_type::type::mod:
     {
-      auto h = hash_reduced(root, hash_reducers, hash_counter);
+      auto h = hash_reduced(root, cache.hash_reducers, cache.hash_counter);
       auto const dname = "m" + to_hex_string(h);
       auto mul_name = "j" + dname;
-      mul << "*" << mul_name;
+      cache.mul << "*" << mul_name;
 
-      if (used_objects.emplace(h).second) {
-        distance_function << "float " << mul_name << "=1.0;";
-        int off = current_offset;
+      if (cache.used_objects.emplace(h).second) {
+        cache.distance_function << "float " << mul_name << "=1.0;";
+        int off = cache.current_offset;
         std::vector<std::string> param_names;
         for (auto const& par : root->params)
         {
           auto param_name = resolve_parameter(par,
-            functions,
-            distance_function,
-            hash_reducers,
-            hash_counter,
-            used_objects,
-            used_param_types,
-            buffer_offsets,
-            current_offset);
+            cache.functions,
+            cache.distance_function,
+            cache.hash_reducers,
+            cache.hash_counter,
+            cache.used_objects,
+            cache.used_param_types,
+            cache.buffer_offsets,
+            cache.current_offset);
           param_names.push_back(std::move(param_name));
         }
         auto const p = std::static_pointer_cast<sdf_mod>(root);
         std::string in_pos = "_L";
-        if (!p->parent.expired())
+        if (p->child)
         {
-          auto parent = p->parent.lock();
-          in_pos = generate_glsl(parent, functions, distance_function, mul, hash_reducers, hash_counter, used_objects, used_param_types, buffer_offsets, current_offset);
+          in_pos = generate_glsl_impl(p->child, cache);
         }
-        distance_function << "vec3 " << dname << "=" << fun_name << "(" << in_pos << "," << mul_name;
+        cache.distance_function << "vec3 " << dname << "=" << fun_name << "(" << in_pos << "," << mul_name;
 
         for (auto const& n : param_names)
-          distance_function << "," << n;
-        distance_function << ");";
+          cache.distance_function << "," << n;
+        cache.distance_function << ");";
       }
       return dname;
     }
@@ -592,20 +605,12 @@ namespace myrt
     return minified;
   }
 
-  inline std::string generate_glsl(std::shared_ptr<sdf_instruction> const& root, std::unordered_map<size_t, int>& buffer_offsets)
+  inline std::string generate_glsl(std::shared_ptr<sdf_instruction> const& root, sdf_build_cache_t& cache)
   {
-    std::stringstream functions;
-    std::stringstream mul;
-    mul << "1.0";
-    std::stringstream distance_function;
-    std::unordered_set<size_t> used_objects;
-    std::unordered_set<sdf_parameter_type*> used_param_types;
-    std::unordered_map<size_t, int> hash_reducers;
-    int hash_counter = 0;
-    int current_offset = 0;
-    auto d = generate_glsl(root, functions, distance_function, mul, hash_reducers, hash_counter, used_objects, used_param_types, buffer_offsets, current_offset);
+    cache.mul << "1.0";
+    auto d = generate_glsl_impl(root, cache);
 
-    auto str = functions.str() + "float _SDF(vec3 _L, inout _MT _mt) {" + distance_function.str() + "_mt=_mt" + d + ";return " + mul.str() + "*" + d + ";}";
+    auto str = cache.functions.str() + "float _SDF(vec3 _L, inout _MT _mt) {" + cache.distance_function.str() + "_mt=_mt" + d + ";return " + cache.mul.str() + "*" + d + ";}";
 
     str = replace(str, "in_param", "_P");
     str = replace(str, "in_position", "_L");
@@ -622,183 +627,207 @@ namespace myrt
   template<typename T> requires std::is_base_of_v<sdf_instruction, T>
     inline std::string generate_glsl(std::shared_ptr<T> const& root, std::unordered_map<size_t, int>& buffer_offsets)
     {
-      return generate_glsl(std::static_pointer_cast<sdf_instruction>(root), buffer_offsets);
+      sdf_build_cache_t cache;
+      auto c = generate_glsl(std::static_pointer_cast<sdf_instruction>(root), cache);
+      buffer_offsets = cache.buffer_offsets;
+      return c;
     }
 
-    struct sdf_host {
-      sdf_host() = default;
+    struct sdf_glsl_assembly
+    {
+      int id;
+      size_t buffer_blocks_required;
+      std::unordered_map<size_t, int> buffer_offsets;
 
-      template<typename T>
-      sdf_host(std::shared_ptr<T> const& root, bool create_buffer = true) requires std::is_base_of_v<myrt::sdf_instruction, T> {
-        glsl_string = myrt::generate_glsl(root, offsets);
-        buffer_size = std::max_element(begin(offsets), end(offsets), [](auto const& pair, auto const& p2) { return pair.second < p2.second; })->second + 1;
-        if (create_buffer) {
-          buf_backing.resize(buffer_size);
-          buf = buf_backing.data();
-        }
-      }
+      void initialize_from_default(float* buf, std::shared_ptr<sdf_instruction> const& root) {
+        for (size_t i = 0; i < root->params.size(); ++i)
+          set_value(buf, root->params[i], root->params[i]->get_default_value().data());
 
-      template<typename T>
-      sdf_host(sdf_host& old, std::shared_ptr<T> const& root, bool create_buffer = true) requires std::is_base_of_v<myrt::sdf_instruction, T> : sdf_host(root, create_buffer) {
-        assign_parameters(old, root);
-      }
-
-      void override_buffer_ptr(float* ptr) {
-        buf = ptr;
-      }
-
-      template<typename T>
-      void regenerate(std::shared_ptr<T> const& root, bool create_buffer = true) requires std::is_base_of_v<myrt::sdf_instruction, T>
-      {
-        auto tmp = std::move(*this);
-        *this = sdf_host(tmp, root, create_buffer);
-      }
-
-      void assign_parameters(sdf_host& old, std::shared_ptr<sdf_instruction> const& ins)
-      {
-        for (size_t par = 0; par < ins->params.size(); ++par)
+        switch (root->type->instruction_type)
         {
-          auto const param = ins->params[par];
-          std::vector<float> data(param->type->buffer_blocks);
-          old.get_value(param, data.data());
-          set_value(param, data.data());
-
-          switch (ins->type->instruction_type)
-          {
-          case sdf_type::type::prim:
-          {
-            auto const p = std::static_pointer_cast<sdf_prim>(ins);
-            if (!p->parent.expired())
-              assign_parameters(old, p->parent.lock());
-            break;
-          }
-          case sdf_type::type::mod:
-          {
-            auto const p = std::static_pointer_cast<sdf_mod>(ins);
-            if (!p->parent.expired())
-              assign_parameters(old, p->parent.lock());
-            break;
-          }
-          case sdf_type::type::op:
-          {
-            auto const p = std::static_pointer_cast<sdf_op>(ins);
-            if (!p->lhs.expired())
-              assign_parameters(old, p->lhs.lock());
-            if (!p->rhs.expired())
-              assign_parameters(old, p->rhs.lock());
-            break;
-          }
-          }
+        case sdf_type::type::prim:
+        {
+          auto const p = std::static_pointer_cast<sdf_prim>(root);
+          if (p->child)
+            initialize_from_default(buf, p->child);
+          break;
+        }
+        case sdf_type::type::mod:
+        {
+          auto const p = std::static_pointer_cast<sdf_mod>(root);
+          if (p->child)
+            initialize_from_default(buf, p->child);
+          break;
+        }
+        case sdf_type::type::op:
+        {
+          auto const p = std::static_pointer_cast<sdf_op>(root);
+          if (p->lhs)
+            initialize_from_default(buf, p->lhs);
+          if (p->rhs)
+            initialize_from_default(buf, p->rhs);
+          break;
+        }
         }
       }
 
-      void set_value(std::shared_ptr<myrt::sdf_parameter> const& param, float* data) {
-        for (size_t i = 0; i < param->type->buffer_blocks; ++i)
+      void set_value(float* buffer, std::shared_ptr<myrt::sdf_parameter> const& param, float const* data) const {
+        param->set_default_value(std::span<float const>(data, param->type->buffer_blocks));
+        for (size_t i = 0; buffer && i < param->type->buffer_blocks; ++i)
         {
           myrt::sdf_parameter_link self{ param, i };
           auto const& link = param->get_link(i);
           if (!link.is_linked())
           {
             auto const hash = self.hash();
-            auto index_it = offsets.find(hash);
-            if (index_it != offsets.end())
-              buf[index_it->second] = data[i];
+            auto index_it = buffer_offsets.find(hash);
+            if (index_it != buffer_offsets.end())
+              buffer[index_it->second] = data[i];
           }
         }
       }
-      void get_value(myrt::sdf_parameter_link const& self, float* data) const {
+
+      void set_value(float* buffer, std::shared_ptr<myrt::sdf_parameter> const& param, int data) const {
+        float cast = float(data);
+        set_value(buffer, param, &cast);
+      }
+      void set_value(float* buffer, std::shared_ptr<myrt::sdf_parameter> const& param, unsigned data) const {
+        float cast = float(data);
+        set_value(buffer, param, &cast);
+      }
+      void set_value(float* buffer, std::shared_ptr<myrt::sdf_parameter> const& param, float data) const {
+        set_value(buffer, param, &data);
+      }
+      void set_value(float* buffer, std::shared_ptr<myrt::sdf_parameter> const& param, rnu::vec2 data) const {
+        set_value(buffer, param, data.data());
+      }
+      void set_value(float* buffer, std::shared_ptr<myrt::sdf_parameter> const& param, rnu::vec3 data) const {
+        set_value(buffer, param, data.data());
+      }
+      void set_value(float* buffer, std::shared_ptr<myrt::sdf_parameter> const& param, rnu::vec4 data) const {
+        set_value(buffer, param, data.data());
+      }
+      void set_value(float* buffer, std::shared_ptr<myrt::sdf_parameter> const& param, rnu::mat2 data) const {
+        set_value(buffer, param, data.data());
+      }
+      void set_value(float* buffer, std::shared_ptr<myrt::sdf_parameter> const& param, rnu::mat4 data) const {
+        set_value(buffer, param, data.data());
+      }
+
+      void get_link_value(float* buffer, myrt::sdf_parameter_link const& self, float* data) const {
         auto const& link = self.other->get_link(self.block);
         if (!link.is_linked())
         {
           auto const hash = self.hash();
-          auto index_it = offsets.find(hash);
-          if(index_it != offsets.end())
-            data[0] = buf[index_it->second];
+          auto index_it = buffer_offsets.find(hash);
+          if (index_it != buffer_offsets.end())
+            data[0] = buffer[index_it->second];
         }
         else
         {
-          get_value(link, data);
+          get_link_value(buffer, link, data);
         }
       }
-      void get_value(std::shared_ptr<myrt::sdf_parameter> const& param, float* data) const {
+
+      void get_value(float* buffer, std::shared_ptr<myrt::sdf_parameter> const& param, float* data) const {
+        if (!buffer)
+        {
+          std::copy(param->get_default_value().begin(), param->get_default_value().end(), data);
+          return;
+        }
         for (size_t i = 0; i < param->type->buffer_blocks; ++i)
         {
           myrt::sdf_parameter_link self{ param, i };
-          get_value(self, data + i);
+          get_link_value(buffer, self, data + i);
         }
       }
-      void set_value(std::shared_ptr<myrt::sdf_parameter> const& param, int data) {
-        float cast = float(data);
-        set_value(param, &cast);
-      }
-      void set_value(std::shared_ptr<myrt::sdf_parameter> const& param, unsigned data) {
-        float cast = float(data);
-        set_value(param, &cast);
-      }
-      void set_value(std::shared_ptr<myrt::sdf_parameter> const& param, float data) {
-        set_value(param, &data);
-      }
-      void set_value(std::shared_ptr<myrt::sdf_parameter> const& param, rnu::vec2 data) {
-        set_value(param, data.data());
-      }
-      void set_value(std::shared_ptr<myrt::sdf_parameter> const& param, rnu::vec3 data) {
-        set_value(param, data.data());
-      }
-      void set_value(std::shared_ptr<myrt::sdf_parameter> const& param, rnu::vec4 data) {
-        set_value(param, data.data());
-      }
-      void set_value(std::shared_ptr<myrt::sdf_parameter> const& param, rnu::mat2 data) {
-        set_value(param, data.data());
-      }
-      void set_value(std::shared_ptr<myrt::sdf_parameter> const& param, rnu::mat4 data) {
-        set_value(param, data.data());
-      }
 
-      void get_value(std::shared_ptr<myrt::sdf_parameter> const& param, int& data) const {
+      void get_value(float* buffer, std::shared_ptr<myrt::sdf_parameter> const& param, int& data) const {
         float cast = float(data);
-        get_value(param, &cast);
+        get_value(buffer, param, &cast);
         data = int(cast);
       }
-      void get_value(std::shared_ptr<myrt::sdf_parameter> const& param, unsigned& data) const {
+      void get_value(float* buffer, std::shared_ptr<myrt::sdf_parameter> const& param, unsigned& data) const {
         float cast = float(data);
-        get_value(param, &cast);
+        get_value(buffer, param, &cast);
         data = unsigned(cast);
       }
-      void get_value(std::shared_ptr<myrt::sdf_parameter> const& param, float& data) const {
-        get_value(param, &data);
+      void get_value(float* buffer, std::shared_ptr<myrt::sdf_parameter> const& param, float& data) const {
+        get_value(buffer, param, &data);
       }
-      void get_value(std::shared_ptr<myrt::sdf_parameter> const& param, rnu::vec2& data) const {
-        get_value(param, data.data());
+      void get_value(float* buffer, std::shared_ptr<myrt::sdf_parameter> const& param, rnu::vec2& data) const {
+        get_value(buffer, param, data.data());
       }
-      void get_value(std::shared_ptr<myrt::sdf_parameter> const& param, rnu::vec3& data) const {
-        get_value(param, data.data());
+      void get_value(float* buffer, std::shared_ptr<myrt::sdf_parameter> const& param, rnu::vec3& data) const {
+        get_value(buffer, param, data.data());
       }
-      void get_value(std::shared_ptr<myrt::sdf_parameter> const& param, rnu::vec4& data) const {
-        get_value(param, data.data());
+      void get_value(float* buffer, std::shared_ptr<myrt::sdf_parameter> const& param, rnu::vec4& data) const {
+        get_value(buffer, param, data.data());
       }
-      void get_value(std::shared_ptr<myrt::sdf_parameter> const& param, rnu::mat2& data) const {
-        get_value(param, data.data());
+      void get_value(float* buffer, std::shared_ptr<myrt::sdf_parameter> const& param, rnu::mat2& data) const {
+        get_value(buffer, param, data.data());
       }
-      void get_value(std::shared_ptr<myrt::sdf_parameter> const& param, rnu::mat4& data) const {
-        get_value(param, data.data());
+      void get_value(float* buffer, std::shared_ptr<myrt::sdf_parameter> const& param, rnu::mat4& data) const {
+        get_value(buffer, param, data.data());
       }
 
       template<typename T, typename Param>
-      T get_value(std::shared_ptr<Param> const& param) const requires std::is_base_of_v<myrt::sdf_parameter, Param>{
+      T get_value(float* buffer, std::shared_ptr<Param> const& param) const requires std::is_base_of_v<myrt::sdf_parameter, Param>{
         T value;
-        get_value(param, value);
+        get_value(buffer, param, value);
         return value;
       }
+    };
 
-      std::string glsl_string;
-      std::unordered_map<size_t, int> offsets;
-      std::vector<float> buf_backing;
-      size_t buffer_size;
-      float* buf = nullptr;
+    struct sdf_glsl_assembler {
+      constexpr static auto empty_sdf_glsl = "float map(vec3 p, inout _MT _mt) { switch(sdf_index_current) { default: return 1.0 / 0.0; }}";
+
+      sdf_glsl_assembly append(std::shared_ptr<sdf_instruction> const& root)
+      {
+        sdf_glsl_assembly new_assembly;
+        size_t const offset_before = m_build_cache.current_offset;
+        prepare_build_cache();
+        const auto glsl_string = myrt::generate_glsl(root, m_build_cache);
+        new_assembly.buffer_offsets = std::move(m_build_cache.buffer_offsets);
+        new_assembly.id = m_current_id++;
+        new_assembly.buffer_blocks_required = m_build_cache.current_offset - offset_before;
+
+        std::stringstream stream;
+        stream << "#define _SDF _SDF" << new_assembly.id << '\n';
+        stream << glsl_string << "\n#undef _SDF\n";
+        m_full_glsl += stream.str();
+
+        append_map_case(new_assembly.id);
+        return new_assembly;
+      }
+
+      std::string get_assembled_glsl() const {
+        return m_full_glsl + m_map_function;
+      }
+
+    private:
+      void append_map_case(int id) {
+        m_map_function.pop_back(); //}
+        m_map_function.pop_back(); //}
+
+        auto const id_str = std::to_string(id);
+        m_map_function += "case " + id_str + ": return _SDF" + id_str + "(p, _mt);}}";
+      }
+
+      void prepare_build_cache() {
+        m_build_cache.buffer_offsets.clear();
+        m_build_cache.used_objects.clear();
+        m_build_cache.functions.str("");
+        m_build_cache.mul.str("");
+        m_build_cache.distance_function.str("");
+      }
+
+      int m_current_id = 0;
+      std::string m_full_glsl;
+      std::string m_map_function = empty_sdf_glsl;
+      sdf_build_cache_t m_build_cache;
     };
 }
-
-
 
 namespace myrt::sdfs {
   struct prim;
@@ -817,30 +846,30 @@ namespace myrt::sdfs {
         }
       }
 
-      void set(sdf_host& host, size_t parameter, float* value_array, size_t length) {
-        // TODO: check length;
-        host.set_value(_ptr->params[parameter], value_array);
-      }
+      //void set(sdf_glsl_assembly& assembly, size_t parameter, float* value_array, size_t length) {
+      //  // TODO: check length;
+      //  assembly.set_value(nullptr, _ptr->params[parameter], value_array);
+      //}
 
-      template<typename T>
-      void set(sdf_host& host, size_t parameter, T&& value) {
-        host.set_value(_ptr->params[parameter], std::forward<T>(value));
-      }
+      //template<typename T>
+      //void set(sdf_glsl_assembly& assembly, size_t parameter, T&& value) {
+      //  assembly.set_value(nullptr, _ptr->params[parameter], std::forward<T>(value));
+      //}
 
-      void get(sdf_host& host, size_t parameter, float* value_array, size_t length) {
-        // TODO: check length;
-        host.get_value(_ptr->params[parameter], value_array);
-      }
+      //void get(sdf_glsl_assembly& assembly, size_t parameter, float* value_array, size_t length) {
+      //  // TODO: check length;
+      //  assembly.get_value(nullptr, _ptr->params[parameter], value_array);
+      //}
 
-      template<typename T>
-      void get(sdf_host& host, size_t parameter, T& value) const {
-        host.get_value(_ptr->params[parameter], value);
-      }
+      //template<typename T>
+      //void get(sdf_glsl_assembly& assembly, size_t parameter, T& value) const {
+      //  assembly.get_value(nullptr, _ptr->params[parameter], value);
+      //}
 
-      template<typename T>
-      T get(sdf_host& host, size_t parameter) const {
-        return host.get_value<T>(_ptr->params[parameter]);
-      }
+      //template<typename T>
+      //T get(sdf_glsl_assembly& assembly, size_t parameter) const {
+      //  return assembly.get_value<T>(nullptr, _ptr->params[parameter]);
+      //}
 
       std::shared_ptr<sdf_parameter> get_parameter(size_t index) const {
         if (index >= _ptr->params.size())
@@ -899,17 +928,23 @@ namespace myrt::sdfs {
           constexpr static size_t index = Index;
 
           constexpr parameter() = default;
+
+          template<typename T>
+          void set_default(std::shared_ptr<S> const& _ptr, T&& value) {
+            sdf_glsl_assembly temp_asm{};
+            temp_asm.set_value(nullptr, _ptr->params[index], std::forward<T>(value));
+          }
         };
 
-        template<size_t Index, typename TValue, typename TParam>
-        void set(parameter<Index, TValue, TParam> const&, sdf_host& host, TValue value) {
-          set(host, Index, value);
-        }
+        /* template<size_t Index, typename TValue, typename TParam>
+         void set(parameter<Index, TValue, TParam> const&, TValue value) {
+           set(Index, value);
+         }
 
-        template<size_t Index, typename TValue, typename TParam>
-        TValue get(parameter<Index, TValue, TParam> const&, sdf_host& host) {
-          return get<TValue>(host, Index);
-        }
+         template<size_t Index, typename TValue, typename TParam>
+         TValue get(parameter<Index, TValue, TParam> const&) {
+           return get<TValue>(Index);
+         }*/
 
         template<size_t Index, typename TValue, typename TParam>
         std::shared_ptr<TParam> get_parameter(parameter<Index, TValue, TParam> const&) {
@@ -986,6 +1021,16 @@ namespace myrt::sdfs {
         _ptr->set_rhs(rhs.get_pointer());
         return *this;
       }
+
+      template<typename Lhs, typename Rhs>
+      op& apply(Lhs lhs, Rhs rhs)
+        requires (std::is_base_of_v<sdf<sdf_op>, Lhs> || std::is_base_of_v<sdf<sdf_prim>, Lhs>) &&
+          (std::is_base_of_v<sdf<sdf_op>, Rhs> || std::is_base_of_v<sdf<sdf_prim>, Rhs>) {
+
+        set_left(std::move(lhs));
+        set_right(std::move(rhs));
+        return *this;
+      }
     };
 
     struct mod : sdf<sdf_mod> {
@@ -1005,10 +1050,13 @@ namespace myrt::sdfs {
         sdf_type::type::prim, "inout_material = load_material(in_param1); return length(in_position) - in_param0;", { float_param::type, int_param::type }
       };
 
-      sphere() : prim(sphere_type) {}
+      sphere(float radius = 1.0f, int material_index = 0) : prim(sphere_type) {
+        this->radius.set_default(_ptr, radius);
+        this->material.set_default(_ptr, material_index);
+      }
 
-      constexpr static parameter<0, float, float_param> radius{};
-      constexpr static parameter<1, int, int_param> material{};
+      [[no_unique_address]] parameter<0, float, float_param> radius{};
+      [[no_unique_address]] parameter<1, int, int_param> material{};
     };
 
     struct translate : mod {
@@ -1016,9 +1064,11 @@ namespace myrt::sdfs {
         sdf_type::type::mod, "return in_position - in_param0;", { vec3_param::type }
       };
 
-      translate() : mod(translate_type) {}
+      translate(rnu::vec3 offset = {}) : mod(translate_type) {
+        this->offset.set_default(_ptr, offset);
+      }
 
-      constexpr static parameter<0, rnu::vec3, vec3_param> offset{};
+      [[no_unique_address]] parameter<0, rnu::vec3, vec3_param> offset{};
     };
 
     struct hard_union : op {
@@ -1030,6 +1080,28 @@ return m;)", {  }
       };
 
       hard_union() : op(hard_union_type) {}
+    };
+
+    struct hard_subtraction : op {
+      static inline const basic_type hard_subtraction_type = basic_type{
+        sdf_type::type::op, R"(
+float m = max(-in_distance0,in_distance1);
+inout_material = mix_material(in_material0, in_material1, float(m == in_distance1));
+return m;)", {  }
+      };
+
+      hard_subtraction() : op(hard_subtraction_type) {}
+    };
+
+    struct hard_intersection : op {
+      static inline const basic_type hard_intersection_type = basic_type{
+        sdf_type::type::op, R"(
+float m = max(in_distance0,in_distance1);
+inout_material = mix_material(in_material0, in_material1, float(m == in_distance1));
+return m;)", {  }
+      };
+
+      hard_intersection() : op(hard_intersection_type) {}
     };
 
     struct smooth_union : op {
@@ -1046,9 +1118,49 @@ return mix(d2, d1, h) - k * h * (1.0 - h);)";
         sdf_type::type::op, glsl, { float_param::type }
       };
 
-      smooth_union() : op(smooth_union_type) {}
+      smooth_union(float factor = 0.1f) : op(smooth_union_type) {
+        this->factor.set_default(_ptr, factor);
+      }
 
-      constexpr static parameter<0, float, float_param> factor{};
+      [[no_unique_address]] parameter<0, float, float_param> factor{};
+    };
+
+    struct smooth_subtraction : op {
+      constexpr static auto glsl = R"(
+float d1 = in_distance0;
+float d2 = in_distance1;
+float k = in_param0;
+inout_material = mix_material(in_material0, in_material1, 1.0-h);
+float h = clamp( 0.5 - 0.5*(d2+d1)/k, 0.0, 1.0 );
+return mix( d2, -d1, h ) + k*h*(1.0-h);)";
+      static inline const basic_type smooth_subtraction_type = basic_type{
+        sdf_type::type::op, glsl, { float_param::type }
+      };
+
+      smooth_subtraction(float factor = 0.1f) : op(smooth_subtraction_type) {
+        this->factor.set_default(_ptr, factor);
+      }
+
+      [[no_unique_address]] parameter<0, float, float_param> factor{};
+    };
+
+    struct smooth_intersection : op {
+      constexpr static auto glsl = R"(
+float d1 = in_distance0;
+float d2 = in_distance1;
+float k = in_param0;
+inout_material = mix_material(in_material0, in_material1, 1.0-h);
+float h = clamp( 0.5 - 0.5*(d2-d1)/k, 0.0, 1.0 );
+return mix( d2, d1, h ) + k*h*(1.0-h);)";
+      static inline const basic_type smooth_intersection_type = basic_type{
+        sdf_type::type::op, glsl, { float_param::type }
+      };
+
+      smooth_intersection(float factor = 0.1f) : op(smooth_intersection_type) {
+        this->factor.set_default(_ptr, factor);
+      }
+
+      [[no_unique_address]] parameter<0, float, float_param> factor{};
     };
 
     struct box : prim {
@@ -1061,28 +1173,13 @@ inout_material = load_material(in_param1);
   return length(max(q,0.0)) + min(max(q.x,max(q.y,q.z)),0.0);)", {vec3_param::type, int_param::type}
       };
 
-      box() : prim(box_type) {}
+      box(rnu::vec3 size = rnu::vec3{ 1,1,1 }, int material_index = 0) : prim(box_type) {
+        this->size.set_default(_ptr, size);
+        this->material.set_default(_ptr, material_index);
+      }
 
-      constexpr static parameter<0, rnu::vec3, vec3_param> size{};
-      constexpr static parameter<1, int, int_param> material{};
-    };
-
-    struct box_rounded : prim {
-      static inline const basic_type rounded_box_type = basic_type{
-        sdf_type::type::prim, R"(
-  vec3 b = in_param0;
-  float r = in_param1;
-  vec3 p = in_position; 
-inout_material = load_material(in_param2);
-  vec3 q = abs(p) - b;
-  return length(max(q,0.0)) + min(max(q.x,max(q.y,q.z)),0.0) - r;)", {vec3_param::type, float_param::type, int_param::type}
-      };
-
-      box_rounded() : prim(rounded_box_type) {}
-
-      constexpr static parameter<0, rnu::vec3, vec3_param> size{};
-      constexpr static parameter<1, float, float_param> radius{};
-      constexpr static parameter<2, int, int_param> material{};
+      [[no_unique_address]] parameter<0, rnu::vec3, vec3_param> size{};
+      [[no_unique_address]] parameter<1, int, int_param> material{};
     };
 
     struct torus : prim {
@@ -1096,17 +1193,21 @@ inout_material = load_material(in_param2);
   return length(q)-rsmall;)", {float_param::type, float_param::type, int_param::type}
       };
 
-      torus() : prim(torus_type) {}
+      torus(float radius_large = 1.f, float radius_small = 0.2f, int material_index = 0) : prim(torus_type) {
+        this->radius_large.set_default(_ptr, radius_large);
+        this->radius_small.set_default(_ptr, radius_small);
+        this->material.set_default(_ptr, material_index);
+      }
 
-      constexpr static parameter<0, float, float_param> radius_large{};
-      constexpr static parameter<1, float, float_param> radius_small{};
-      constexpr static parameter<2, int, int_param> material{};
+      [[no_unique_address]] parameter<0, float, float_param> radius_large{};
+      [[no_unique_address]] parameter<1, float, float_param> radius_small{};
+      [[no_unique_address]] parameter<2, int, int_param> material{};
     };
 
     struct menger_fractal : prim {
       static inline const basic_type menger_fractal_type = basic_type{
         sdf_type::type::prim, R"(vec3 p = in_position;
-inout_material = load_material(in_param1); 
+inout_material = load_material(in_param0); 
 		for (int n = 0; n < 4; n++)
 		{
 		  p = abs(p);
@@ -1124,17 +1225,43 @@ inout_material = load_material(in_param1);
 		  p.y -= 2.;
 		}
 
-		vec3 d = abs(p) - in_param0;
+		vec3 d = abs(p) - vec3(1);
 		float dis = min(max(d.x, max(d.y, d.z)), 0.0) + length(max(d, 0.0));
 
 		dis *= pow(3., float(-4));
 
-		return dis;)", {vec3_param::type, int_param::type}
+		return dis;)", {int_param::type}
       };
 
-      menger_fractal() : prim(menger_fractal_type) {}
+      menger_fractal(int material_index = 0) : prim(menger_fractal_type) {
+        this->material.set_default(_ptr, material_index);
+      }
 
-      constexpr static parameter<0, rnu::vec3, vec3_param> size{};
-      constexpr static parameter<1, int, int_param> material{};
+      [[no_unique_address]] parameter<0, int, int_param> material{};
+    };
+
+    struct vertical_capsule : prim {
+      static inline const basic_type vertical_capsule_type = basic_type{
+        sdf_type::type::prim, R"(inout_material = load_material(in_param2); in_position.y -= clamp( in_position.y, 0.0, in_param0 ); return length( in_position ) - in_param1;)",
+        { float_param::type, float_param::type, int_param::type }
+      };
+
+      vertical_capsule(float height = 1.0f, float radius = 0.2f, int material = 0) : prim(vertical_capsule_type) {
+        this->height.set_default(_ptr, height);
+        this->radius.set_default(_ptr, radius);
+        this->material.set_default(_ptr, material);
+      }
+      [[no_unique_address]] parameter<0, float, float_param> height{};
+      [[no_unique_address]] parameter<1, float, float_param> radius{};
+      [[no_unique_address]] parameter<2, int, int_param> material{};
+    };
+
+    struct mirror_x : mod {
+      static inline const basic_type mirror_x_type = basic_type{
+        sdf_type::type::mod, R"(in_position.x = abs(in_position.x); return in_position;)",
+        {}
+      };
+
+      mirror_x() : mod(mirror_x_type) {}
     };
 }
