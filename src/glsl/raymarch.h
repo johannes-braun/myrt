@@ -75,12 +75,12 @@ hit_t march_sdf(vec3 ro, vec3 rd, float tmax, bool hits_only)
   rd = (((sdf.inverse_transformation) * vec4(rd, 0)).xyz);
 
   float res = -1;
-  float t = 1e-3f;
+  float t = 10 * u_sdf_marching_epsilon;
   material_info_t material;
-  for (int i = DONT_OPTIMIZE_ZERO; i < 128 && t < tmax; i++)
+  for (int i = DONT_OPTIMIZE_ZERO; i < u_sdf_marching_steps && t < tmax; i++)
   {
     float h = abs(map(ro + rd * t, material, true));
-    if (h < 1e-6f)
+    if (h < u_sdf_marching_epsilon)
     {
       res = t;
       break;

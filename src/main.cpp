@@ -60,24 +60,34 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
   auto [cubemap, cube_sampler] = load_cubemap();
   auto bokeh = load_bokeh();
 
-  myrt::sdfs::vertical_capsule capsule(3.f, 0.5f);
-  myrt::sdfs::sphere sphere(1.f);
-  sphere.transform(myrt::sdfs::translate(rnu::vec3(0.5, 0, 0.5)).transform(myrt::sdfs::mirror_x{}));
+  myrt::sdf::vertical_capsule capsule(3.f, 0.5f);
+  myrt::sdf::sphere sphere(1.f);
+  sphere.transform(myrt::sdf::translate(rnu::vec3(0.5, 0, 0.5)).transform(myrt::sdf::mirror_x{}));
 
-  myrt::sdfs::smooth_union unite(0.3f);
+  myrt::sdf::smooth_union unite(0.3f);
   unite.apply(sphere, capsule);
+
+  myrt::sdf::sphere sphere2;
+  sphere2.link_parameter(0, sphere.get_parameter(sphere.radius));
+  sphere2.transform(myrt::sdf::translate(rnu::vec3(0.5, 3, 0.5)).transform(myrt::sdf::mirror_x{}));
+  auto root = myrt::sdf::smooth_union{}.apply(sphere2, unite);
+  root.link_parameter(0, unite.get_parameter(unite.factor));
 
   myrt::sdf_object abstract_art_sdf;
   abstract_art_sdf.name = "Abstract Art";
-  abstract_art_sdf.sdf = scene.push_sdf(myrt::sdf_info_t{ .root = unite.get_pointer() });
+  abstract_art_sdf.sdf = scene.push_sdf(myrt::sdf_info_t{ .root = root.get_pointer() });
   abstract_art_sdf.set(capsule.get_parameter(capsule.material), 1);
   abstract_art_sdf.set(sphere.get_parameter(sphere.material), 2);
+  abstract_art_sdf.set(sphere2.get_parameter(sphere2.material), 3);
 
   bool cubemap_enabled = false;
   bool bokeh_enabled = false;
   bool rr_enabled = false;
   float lens_radius = 100.f;
   int bounces_per_iteration = 8;
+
+  int march_steps = 400;
+  int march_eps_exp = 6;
 
   float pg_sphere_radius = 3;
   float pg_smoothness1 = 0.1f;
@@ -92,7 +102,7 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
     abstract_art_sdf.enqueue();
 
     if (window->hasFocus() && !ImGui::GetIO().WantCaptureKeyboard) {
-      camera.axis(frame.delta_time.count() * (1.f + 5 * sf::Keyboard::isKeyPressed(sf::Keyboard::LShift)),
+      camera.axis(float(frame.delta_time.count()) * (1.f + 5 * sf::Keyboard::isKeyPressed(sf::Keyboard::LShift)),
         sf::Keyboard::isKeyPressed(sf::Keyboard::W),
         sf::Keyboard::isKeyPressed(sf::Keyboard::S),
         sf::Keyboard::isKeyPressed(sf::Keyboard::A),
@@ -162,6 +172,13 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
     {
       pathtracer.set_lens_radius(lens_radius);
     }
+    if (ImGui::DragInt("March Steps", &march_steps, 0.1f, 1, 10000)) {
+      pathtracer.set_sdf_marching_steps(march_steps);
+    }
+    if (ImGui::DragInt("March eps (1e-...)", &march_eps_exp, 0.1f, 0, 10)) {
+      pathtracer.set_sdf_marching_epsilon(1.0 / std::pow(10, march_eps_exp));
+    }
+
     if (ImGui::Button("Reload Shaders"))
     {
       pathtracer.reload_shaders(scene);
@@ -256,7 +273,7 @@ GLuint load_bokeh() {
   GLuint bokeh{};
   glCreateTextures(GL_TEXTURE_2D, 1, &bokeh);
   int bw{}, bh{}, bc{};
-  stbi_uc* img_data = stbi_load((res_dir / "bokeh_hexagon.jpg").string().c_str(), &bw, &bh, &bc, 3);
+  stbi_uc* img_data = stbi_load((res_dir / "bokeh_gear.jpg").string().c_str(), &bw, &bh, &bc, 3);
   glTextureStorage2D(bokeh, 1, GL_RGB8, bw, bh);
   glTextureSubImage2D(bokeh, 0, 0, 0, bw, bh, GL_RGB, GL_UNSIGNED_BYTE, img_data);
   stbi_image_free(img_data);
@@ -277,31 +294,33 @@ std::pair<GLuint, GLuint> load_cubemap()
   glSamplerParameteri(cube_sampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glSamplerParameteri(cube_sampler, GL_TEXTURE_CUBE_MAP_SEAMLESS, true);
 
+  std::filesystem::path folder = "whipple_creek";
+
   int w, h, c;
   // face 1
-  float* img = stbi_loadf((res_dir / "whipple_creek/posx.hdr").string().c_str(), &w, &h, &c, 3);
+  float* img = stbi_loadf((res_dir / folder / "posx.hdr").string().c_str(), &w, &h, &c, 3);
   const int num_mips = static_cast<int>(1 + floor(log(float(std::max(w, h)))));
   glTextureStorage3D(cubemap, num_mips, GL_RGB16F, w, h, 6);
   glTextureSubImage3D(cubemap, 0, 0, 0, 0, w, h, 1, GL_RGB, GL_FLOAT, img);
   stbi_image_free(img);
 
-  img = stbi_loadf((res_dir / "whipple_creek/negx.hdr").string().c_str(), &w, &h, &c, 3);
+  img = stbi_loadf((res_dir / folder / "negx.hdr").string().c_str(), &w, &h, &c, 3);
   glTextureSubImage3D(cubemap, 0, 0, 0, 1, w, h, 1, GL_RGB, GL_FLOAT, img);
   stbi_image_free(img);
 
-  img = stbi_loadf((res_dir / "whipple_creek/posy.hdr").string().c_str(), &w, &h, &c, 3);
+  img = stbi_loadf((res_dir / folder / "posy.hdr").string().c_str(), &w, &h, &c, 3);
   glTextureSubImage3D(cubemap, 0, 0, 0, 2, w, h, 1, GL_RGB, GL_FLOAT, img);
   stbi_image_free(img);
 
-  img = stbi_loadf((res_dir / "whipple_creek/negy.hdr").string().c_str(), &w, &h, &c, 3);
+  img = stbi_loadf((res_dir / folder / "negy.hdr").string().c_str(), &w, &h, &c, 3);
   glTextureSubImage3D(cubemap, 0, 0, 0, 3, w, h, 1, GL_RGB, GL_FLOAT, img);
   stbi_image_free(img);
 
-  img = stbi_loadf((res_dir / "whipple_creek/posz.hdr").string().c_str(), &w, &h, &c, 3);
+  img = stbi_loadf((res_dir / folder / "posz.hdr").string().c_str(), &w, &h, &c, 3);
   glTextureSubImage3D(cubemap, 0, 0, 0, 4, w, h, 1, GL_RGB, GL_FLOAT, img);
   stbi_image_free(img);
 
-  img = stbi_loadf((res_dir / "whipple_creek/negz.hdr").string().c_str(), &w, &h, &c, 3);
+  img = stbi_loadf((res_dir / folder / "negz.hdr").string().c_str(), &w, &h, &c, 3);
   glTextureSubImage3D(cubemap, 0, 0, 0, 5, w, h, 1, GL_RGB, GL_FLOAT, img);
   stbi_image_free(img);
   glGenerateTextureMipmap(cubemap);

@@ -25,7 +25,7 @@ namespace myrt
     struct sdf_info_t {
       using id_type = detail::default_index_type;
 
-      std::shared_ptr<sdf_instruction> root;
+      std::shared_ptr<sdf::instruction> root;
     };
 
     struct material_info_t
@@ -65,7 +65,7 @@ namespace myrt
       bool show = true;
 
       template<typename T>
-      void set(std::shared_ptr<sdf_parameter> const& parameter, T&& value);
+      void set(std::shared_ptr<sdf::parameter> const& parameter, T&& value);
       void enqueue() const;
 
     private:
@@ -127,14 +127,14 @@ namespace myrt
         [[nodiscard]] material_info_t info_of(material_pointer const& material) const;
         void update_material(material_pointer const& material, const material_info_t& info);
 
-        void set_material_parameter(const sdf_pointer& sdf, std::shared_ptr<int_param> const& parameter, material_pointer material);
+        void set_material_parameter(const sdf_pointer& sdf, std::shared_ptr<sdf::int_param> const& parameter, material_pointer material);
 
         template<typename T>
-        void set_parameter(const sdf_pointer& sdf, std::shared_ptr<sdf_parameter> const& parameter, T&& value);
+        void set_parameter(const sdf_pointer& sdf, std::shared_ptr<sdf::parameter> const& parameter, T&& value);
         template<typename T>
-        void set_parameter(const sdf_t* sdf, std::shared_ptr<sdf_parameter> const& parameter, T&& value);
+        void set_parameter(const sdf_t* sdf, std::shared_ptr<sdf::parameter> const& parameter, T&& value);
 
-        void set_parameter(const sdf_pointer& sdf, std::shared_ptr<sdf_parameter> const& parameter, float* value_ptr);
+        void set_parameter(const sdf_pointer& sdf, std::shared_ptr<sdf::parameter> const& parameter, float* value_ptr);
 
         struct hit {
             size_t index;
@@ -147,13 +147,13 @@ namespace myrt
         [[nodiscard]] decltype(auto) materials() const noexcept { return m_available_materials; }
         [[nodiscard]] decltype(auto) sdfs() const noexcept { return m_available_sdfs; }
 
-        sdf_glsl_assembler const& get_sdf_assembler() {
+        sdf::glsl_assembler const& get_sdf_assembler() {
           return m_sdf_assembler;
         }
 
     private:
-      sdf_glsl_assembly& get_sdf_assembly(sdf_t* sdf);
-      sdf_glsl_assembly const& get_sdf_assembly(const sdf_t* sdf);
+      sdf::glsl_assembly& get_sdf_assembly(sdf_t* sdf);
+      sdf::glsl_assembly const& get_sdf_assembly(const sdf_t* sdf);
 
         void erase_geometry_direct(const geometry_pointer& geometry);
         void erase_geometry_indirect(const geometry_pointer& geometry);
@@ -223,7 +223,7 @@ namespace myrt
         std::vector<float> m_sdf_parameter_buffer;
         std::vector<drawable_sdf_t> m_sdf_drawables;
 
-        sdf_glsl_assembler m_sdf_assembler;
+        sdf::glsl_assembler m_sdf_assembler;
         std::unique_ptr<bvh> m_global_bvh;
         material_pointer m_default_material;
         bool m_materials_changed = false;
@@ -233,18 +233,19 @@ namespace myrt
     };
 
     template<typename T>
-    inline void scene::set_parameter(const sdf_pointer& sdf, std::shared_ptr<sdf_parameter> const& parameter, T&& value)
+    inline void scene::set_parameter(const sdf_pointer& sdf, std::shared_ptr<sdf::parameter> const& parameter, T&& value)
     {
       set_parameter(sdf.get(), parameter, std::forward<T>(value));
     }
     template<typename T>
-    inline void scene::set_parameter(const sdf_t* sdf, std::shared_ptr<sdf_parameter> const& parameter, T&& value)
+    inline void scene::set_parameter(const sdf_t* sdf, std::shared_ptr<sdf::parameter> const& parameter, T&& value)
     {
       m_sdf_buffer_changed = true;
       get_sdf_assembly(sdf).set_value(m_sdf_parameter_buffer.data(), parameter, std::forward<T>(value));
     }
+
     template<typename T>
-    inline void sdf_object::set(std::shared_ptr<sdf_parameter> const& parameter, T&& value)
+    void sdf_object::set(std::shared_ptr<detail::sdf_parameter> const& parameter, T&& value)
     {
       get_scene()->set_parameter(sdf, parameter, std::forward<T>(value));
     }

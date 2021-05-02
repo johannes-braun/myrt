@@ -33,6 +33,8 @@ namespace myrt
         void set_focus(float focus);
         void set_max_bounces(int bounces);
         void set_enable_russian_roulette(bool enable);
+        void set_sdf_marching_steps(int steps);
+        void set_sdf_marching_epsilon(float eps);
         void reload_shaders(scene& scene);
 
         void invalidate_texture();
@@ -62,6 +64,8 @@ namespace myrt
         float m_last_height = 0;
         float m_focus = 5.0f;
         int m_max_bounces = 8;
+        int m_sdf_marching_steps = 400;
+        float m_sdf_marching_epsilon = 1e-6f;
         scene const* m_last_scene = nullptr;
         std::shared_ptr<texture_t> m_last_sample_texture;
         std::shared_ptr<texture_t> m_current_sample_texture;

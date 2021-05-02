@@ -18,7 +18,7 @@ namespace myrt
 
     struct sdf_t {
       sdf_info_t info;
-      sdf_glsl_assembly assembly;
+      sdf::glsl_assembly assembly;
       scene* scene = nullptr;
       int index = 0;
       size_t buffer_offset = 0;
@@ -91,7 +91,7 @@ namespace myrt
         m_material_infos.at(material->index) = info;
         m_materials_changed = true;
     }
-    void scene::set_material_parameter(const sdf_pointer& sdf, std::shared_ptr<int_param> const& parameter, material_pointer material)
+    void scene::set_material_parameter(const sdf_pointer& sdf, std::shared_ptr<sdf::int_param> const& parameter, material_pointer material)
     {
       m_sdf_buffer_changed = true;
       sdf->assembly.set_value(m_sdf_parameter_buffer.data(), parameter, material->index);
@@ -121,7 +121,7 @@ namespace myrt
         }
     }
 
-    void scene::set_parameter(const sdf_pointer& sdf, std::shared_ptr<sdf_parameter> const& parameter, float* value_ptr)
+    void scene::set_parameter(const sdf_pointer& sdf, std::shared_ptr<sdf::parameter> const& parameter, float* value_ptr)
     {
       m_sdf_buffer_changed = true;
       sdf->assembly.set_value(m_sdf_parameter_buffer.data(), parameter, value_ptr);
@@ -202,12 +202,12 @@ namespace myrt
       return ptr;
     }
 
-    sdf_glsl_assembly const& scene::get_sdf_assembly(const sdf_t* sdf)
+    sdf::glsl_assembly const& scene::get_sdf_assembly(const sdf_t* sdf)
     {
       return sdf->assembly;
     }
 
-    sdf_glsl_assembly& scene::get_sdf_assembly(sdf_t* sdf)
+    sdf::glsl_assembly& scene::get_sdf_assembly(sdf_t* sdf)
     {
       return sdf->assembly;
     }

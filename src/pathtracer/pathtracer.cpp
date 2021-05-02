@@ -154,6 +154,8 @@ namespace myrt
         glUniform1i(4, m_sample_counter++);
         glUniform1i(9, m_max_bounces);
         glUniform1i(10, m_enable_russian_roulette);
+        glUniform1i(11, m_sdf_marching_steps);
+        glUniform1f(12, m_sdf_marching_epsilon);
 
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -214,6 +216,16 @@ namespace myrt
     {
         if (detail::set_if_different(m_enable_russian_roulette, enable))
             invalidate_counter();
+    }
+    void pathtracer::set_sdf_marching_steps(int steps)
+    {
+      if (detail::set_if_different(m_sdf_marching_steps, steps))
+        invalidate_counter();
+    }
+    void pathtracer::set_sdf_marching_epsilon(float eps)
+    {
+      if (detail::set_if_different(m_sdf_marching_epsilon, eps))
+        invalidate_counter();
     }
     void pathtracer::repopulate_random_texture() {
         std::vector<float> random_texture_data(random_number_count);

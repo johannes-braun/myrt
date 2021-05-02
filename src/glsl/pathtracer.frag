@@ -24,6 +24,8 @@ struct light_t
     vec2 attenuation;
 } test_lights[2];
 
+vec3 tonemap(vec3 col);
+
 void main()
 {
     test_lights[0].position = vec3(4, 5, 4);
@@ -46,21 +48,25 @@ void main()
 
     vec3 rc = in_ray_origin + u_focus * in_ray_direction;
 
-    vec2 bokeh_offset = rand_offset2d(0.49f, vec2(0, 1), vec2(1, 0));
     
     int bounces = u_max_bounces;
     vec3 path_color = vec3(0, 0, 0);
     vec3 path_reflectance = vec3(1, 1, 1);
     float path_probability = 1;
 
-    if(u_has_bokeh)
+    int bokeh_tries = 8;
+    vec2 bokeh_offset = rand_offset2d(0.49f, vec2(0, 1), vec2(1, 0));
+    while(u_has_bokeh && (bokeh_tries == 8 || max(max(path_reflectance.x, path_reflectance.y), path_reflectance.z) < 1e-5) && bokeh_tries-- > 0)
     {
         path_reflectance = textureLod(u_bokeh, vec2(0.5) + bokeh_offset, 0).rgb;
+        bokeh_offset = rand_offset2d(0.49f, vec2(0, 1), vec2(1, 0));
     }
     
     if(max(max(path_reflectance.x, path_reflectance.y), path_reflectance.z) < 1e-5)
     {
         path_color = vec3(0, 0, 0);
+        out_color = last_color;
+        return;
     }
     else
     {
@@ -89,7 +95,7 @@ void main()
             {
                 if(u_has_cubemap)
                 {
-                    path_color += path_reflectance * textureLod(u_cubemap, ray_direction, 0).rgb;
+                    path_color += pow(path_reflectance * textureLod(u_cubemap, ray_direction, 0).rgb, vec3(1/1.0)) + vec3(0.0);
                 }
                 else
                 {
@@ -155,12 +161,12 @@ void main()
 
             ray_direction = brdf.continue_direction;
 
-            vec3 off = ray_direction * 1.5e-5f;
+            vec3 off = ray_direction * 1e-4f;
             vec3 next_ray_origin = hit.position + off;
             ray_origin = next_ray_origin;
         }
     }
-    path_color = lottes(path_color);
+    path_color = tonemap(path_color);
 
     if(any(isnan(path_color)) || any(isinf(path_color)))
         path_color = last_color.rgb;
@@ -174,3 +180,16 @@ void main()
 }
 
 #include "pathtracer_internal.h"
+  
+vec3 unreal(vec3 x) {
+  return x / (x + 0.155) * 1.019;
+}
+
+float unreal(float x) {
+  return x / (x + 0.155) * 1.019;
+}
+vec3 tonemap(vec3 col)
+{
+  col = clamp(col, 0, 10);
+  return unreal(col);
+}
