@@ -52,14 +52,30 @@ namespace myrt
         sample_internal(scene, target_framebuffer, width, height);
     }
 
-    void pathtracer::reload_shaders() {
+    void pathtracer::reload_shaders(scene& scene) {
         const auto vertex_shader = glsp::preprocess_file(res_dir / "../src/glsl/pathtracer.vert");
+
+        glsp::definition sdf_inject;
+        auto const& sdfs = scene.sdfs();
+        sdf_inject.name = "MYRT_INJECT_SDF_MAP_CODE_HERE";
+        if (!sdfs.empty())
+        {
+          sdf_inject.info.replacement = scene.lock_sdf_host(sdfs[0]).glsl_string;
+          // Todo: switch...
+
+        }
+        else
+        {
+          sdf_inject.info.replacement = "float map(vec3 p, inout _MT _mt) { return 1.0 / 0.0; }";
+        }
+
         const auto fragment_shader = glsp::preprocess_file(res_dir / "../src/glsl/pathtracer.frag", {}, {
             glsp::definition("MYRT_POINT_TYPE", detail::glsl::bvh_point_type),
             glsp::definition("MYRT_INDEX_TYPE", detail::glsl::bvh_index_type),
             glsp::definition("MYRT_BVH_NODE_PADDING_BYTES", std::to_string((sizeof(aligned_node_t) - sizeof(bvh_node_t)) / sizeof(detail::default_index_type))),
             glsp::definition("MYRT_BVH_NODE_TYPE_SHIFT", std::to_string(bvh_node_t::type_shift)),
-            glsp::definition("MYRT_BVH_NODE_STRUCT", detail::glsl::bvh_struct_name) });
+            glsp::definition("MYRT_BVH_NODE_STRUCT", detail::glsl::bvh_struct_name),
+            sdf_inject });
 
         const auto new_program = make_program(vertex_shader.contents, fragment_shader.contents);
         if (new_program)
@@ -74,18 +90,28 @@ namespace myrt
     {
         const std::uniform_int_distribution<unsigned> distribution{ 0, max_uniform_distribution_value };
 
-        if (!m_is_initialized)
-            initialize();
+        bool const just_initializing = !m_is_initialized;
+        auto const prepare_result = scene.prepare_and_bind();
+        const bool scene_has_changed = prepare_result.drawables_changed || prepare_result.geometries_changed || prepare_result.materials_changed ||
+          prepare_result.sdfs_changed || prepare_result.sdf_buffer_changed;
 
-        const bool scene_has_changed = scene.prepare_and_bind();
+        if (!m_is_initialized)
+          initialize(scene);
+
+        if (detail::set_if_different(m_last_scene, &scene))
+          reload_shaders(scene);
+
+        if (scene_has_changed)
+          invalidate_counter();
+
+        if (prepare_result.sdfs_changed && !just_initializing)
+          reload_shaders(scene);
+
         if (!m_program)
             return;
 
         m_texture_provider.new_frame();
         repopulate_random_texture();
-
-        if (detail::set_if_different(m_last_scene, &scene) || scene_has_changed)
-            invalidate_counter();
         if (detail::set_if_different(m_last_width, width) ||
             detail::set_if_different(m_last_height, height))
         {
@@ -183,10 +209,10 @@ namespace myrt
         if (detail::set_if_different(m_lens_radius, radius))
             invalidate_counter();
     }
-    void pathtracer::initialize()
+    void pathtracer::initialize(scene& scene)
     {
         m_is_initialized = true;
-        reload_shaders();
+        reload_shaders(scene);
         glCreateFramebuffers(1, &m_framebuffer);
         glCreateVertexArrays(1, &m_vertex_array);
 

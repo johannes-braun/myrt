@@ -33,7 +33,7 @@ namespace myrt
         void set_focus(float focus);
         void set_max_bounces(int bounces);
         void set_enable_russian_roulette(bool enable);
-        void reload_shaders();
+        void reload_shaders(scene& scene);
 
         void invalidate_texture();
         void invalidate_counter();
@@ -42,7 +42,7 @@ namespace myrt
 
     private:
         void sample_internal(scene& scene, GLuint target_framebuffer, int width, int height);
-        void initialize();
+        void initialize(scene& scene);
         void deinitialize();
         void repopulate_random_texture();
 

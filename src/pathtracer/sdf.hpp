@@ -4,6 +4,8 @@
 #include <string_view>
 #include <variant>
 #include <memory>
+#include <sstream>
+#include <iomanip>
 
 namespace myrt
 {
@@ -493,7 +495,7 @@ namespace myrt
     throw std::runtime_error("could not determinee instruction type.");
   }
 
-  std::string replace(std::string str, const std::string& sub1, const std::string& sub2)
+  inline std::string replace(std::string str, const std::string& sub1, const std::string& sub2)
   {
     if (sub1.empty())
       return str;
@@ -538,7 +540,7 @@ namespace myrt
     return false;
   }
 
-  std::string minify_glsl(std::string const& original) {
+  inline std::string minify_glsl(std::string const& original) {
     std::string minified;
     //preallocate a bit more than needed.
     minified.reserve(original.size());
@@ -603,7 +605,7 @@ namespace myrt
     int current_offset = 0;
     auto d = generate_glsl(root, functions, distance_function, mul, hash_reducers, hash_counter, used_objects, used_param_types, buffer_offsets, current_offset);
 
-    auto str = functions.str() + "float map(vec3 _L, inout _MT _mt) {" + distance_function.str() + "_mt=_mt" + d + ";return " + mul.str() + "*" + d + ";}";
+    auto str = functions.str() + "float _SDF(vec3 _L, inout _MT _mt) {" + distance_function.str() + "_mt=_mt" + d + ";return " + mul.str() + "*" + d + ";}";
 
     str = replace(str, "in_param", "_P");
     str = replace(str, "in_position", "_L");
@@ -624,18 +626,32 @@ namespace myrt
     }
 
     struct sdf_host {
+      sdf_host() = default;
+
       template<typename T>
-      sdf_host(std::shared_ptr<T> const& root) requires std::is_base_of_v<myrt::sdf_instruction, T> {
+      sdf_host(std::shared_ptr<T> const& root, bool create_buffer = true) requires std::is_base_of_v<myrt::sdf_instruction, T> {
         glsl_string = myrt::generate_glsl(root, offsets);
-        buf.resize(std::max_element(begin(offsets), end(offsets), [](auto const& pair, auto const& p2) { return pair.second < p2.second; })->second + 1);
+        buffer_size = std::max_element(begin(offsets), end(offsets), [](auto const& pair, auto const& p2) { return pair.second < p2.second; })->second + 1;
+        if (create_buffer) {
+          buf_backing.resize(buffer_size);
+          buf = buf_backing.data();
+        }
       }
 
       template<typename T>
-      sdf_host(sdf_host& old, std::shared_ptr<T> const& root) requires std::is_base_of_v<myrt::sdf_instruction, T> {
-        glsl_string = myrt::generate_glsl(root, offsets);
-        buf.resize(std::max_element(begin(offsets), end(offsets), [](auto const& pair, auto const& p2) { return pair.second < p2.second; })->second + 1);
-
+      sdf_host(sdf_host& old, std::shared_ptr<T> const& root, bool create_buffer = true) requires std::is_base_of_v<myrt::sdf_instruction, T> : sdf_host(root, create_buffer) {
         assign_parameters(old, root);
+      }
+
+      void override_buffer_ptr(float* ptr) {
+        buf = ptr;
+      }
+
+      template<typename T>
+      void regenerate(std::shared_ptr<T> const& root, bool create_buffer = true) requires std::is_base_of_v<myrt::sdf_instruction, T>
+      {
+        auto tmp = std::move(*this);
+        *this = sdf_host(tmp, root, create_buffer);
       }
 
       void assign_parameters(sdf_host& old, std::shared_ptr<sdf_instruction> const& ins)
@@ -652,7 +668,7 @@ namespace myrt
           case sdf_type::type::prim:
           {
             auto const p = std::static_pointer_cast<sdf_prim>(ins);
-            if(!p->parent.expired())
+            if (!p->parent.expired())
               assign_parameters(old, p->parent.lock());
             break;
           }
@@ -683,7 +699,10 @@ namespace myrt
           auto const& link = param->get_link(i);
           if (!link.is_linked())
           {
-            buf[offsets.at(self.hash())] = data[i];
+            auto const hash = self.hash();
+            auto index_it = offsets.find(hash);
+            if (index_it != offsets.end())
+              buf[index_it->second] = data[i];
           }
         }
       }
@@ -691,7 +710,10 @@ namespace myrt
         auto const& link = self.other->get_link(self.block);
         if (!link.is_linked())
         {
-          data[0] = buf[offsets.at(self.hash())];
+          auto const hash = self.hash();
+          auto index_it = offsets.find(hash);
+          if(index_it != offsets.end())
+            data[0] = buf[index_it->second];
         }
         else
         {
@@ -770,7 +792,9 @@ namespace myrt
 
       std::string glsl_string;
       std::unordered_map<size_t, int> offsets;
-      std::vector<float> buf;
+      std::vector<float> buf_backing;
+      size_t buffer_size;
+      float* buf = nullptr;
     };
 }
 
@@ -868,39 +892,39 @@ namespace myrt::sdfs {
     public:
 
       template<size_t Index, typename TValue, typename TParam> requires std::is_base_of_v<sdf_parameter, TParam>
-      struct parameter
-      {
-        using param_type = TParam;
-        using value_type = TValue;
-        constexpr static size_t index = Index;
+        struct parameter
+        {
+          using param_type = TParam;
+          using value_type = TValue;
+          constexpr static size_t index = Index;
 
-        constexpr parameter() = default;
-      };
+          constexpr parameter() = default;
+        };
 
-      template<size_t Index, typename TValue, typename TParam>
-      void set(parameter<Index, TValue, TParam> const&, sdf_host& host, TValue value) {
+        template<size_t Index, typename TValue, typename TParam>
+        void set(parameter<Index, TValue, TParam> const&, sdf_host& host, TValue value) {
           set(host, Index, value);
-      }
+        }
 
-      template<size_t Index, typename TValue, typename TParam>
-      TValue get(parameter<Index, TValue, TParam> const&, sdf_host& host) {
-        return get<TValue>(host, Index);
-      }
+        template<size_t Index, typename TValue, typename TParam>
+        TValue get(parameter<Index, TValue, TParam> const&, sdf_host& host) {
+          return get<TValue>(host, Index);
+        }
 
-      template<size_t Index, typename TValue, typename TParam>
-      std::shared_ptr<TParam> get_parameter(parameter<Index, TValue, TParam> const&) {
-        return get_parameter<TParam>(Index);
-      }
+        template<size_t Index, typename TValue, typename TParam>
+        std::shared_ptr<TParam> get_parameter(parameter<Index, TValue, TParam> const&) {
+          return get_parameter<TParam>(Index);
+        }
 
-      template<size_t Index, typename TValue, typename TParam>
-      std::shared_ptr<TParam> link(parameter<Index, TValue, TParam> const& , std::shared_ptr<TParam> param) {
-        return link_parameter(Index, std::move(param));
-      }
+        template<size_t Index, typename TValue, typename TParam>
+        std::shared_ptr<TParam> link(parameter<Index, TValue, TParam> const&, std::shared_ptr<TParam> param) {
+          return link_parameter(Index, std::move(param));
+        }
 
-      template<size_t Index, typename TValue, typename TParam>
-      void unlink(parameter<Index, TValue, TParam> const&) {
-        return unlink_parameter(Index);
-      }
+        template<size_t Index, typename TValue, typename TParam>
+        void unlink(parameter<Index, TValue, TParam> const&) {
+          return unlink_parameter(Index);
+        }
     };
 
     struct basic_type {

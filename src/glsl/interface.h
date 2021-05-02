@@ -57,6 +57,7 @@ layout(binding = 5, std430) restrict readonly buffer Geometries { drawable_geome
 layout(binding = 6, std430) restrict readonly buffer BVHGlobal { bvh_node_t global_bvh_nodes[]; };
 layout(binding = 7, std430) restrict readonly buffer BVHIndicesGlobal { uint global_bvh_indices[]; };
 layout(binding = 8, std430) restrict readonly buffer Materials { material_info_t materials[]; };
+layout(binding = 9, std430) restrict readonly buffer SDFData { float sdf_buffer[]; };
 
 // UNIFORMS
 layout(location = 0) uniform mat4 u_inv_proj;

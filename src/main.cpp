@@ -6,8 +6,6 @@
 #include "gl.hpp"
 #include <stb_image.h>
 
-#include "sdf.hpp"
-
 const static std::filesystem::path res_dir = "../../../res";
 /*
 *
@@ -40,57 +38,12 @@ std::pair<GLuint, GLuint> load_cubemap();
 
 
 int main(int argc, char** argv) {
-
-  // Step 1: build sdf scene
-  myrt::sdfs::torus torus1;
-  myrt::sdfs::sphere sphere2;
-  myrt::sdfs::sphere sphere3;
-  myrt::sdfs::menger_fractal fractal;
-
-  myrt::sdfs::translate fractal_offset;
-  myrt::sdfs::translate torus1_top;
-  myrt::sdfs::translate sphere2_middle;
-  myrt::sdfs::translate sphere3_bottom;
-
-  fractal.transform(fractal_offset);
-  torus1.transform(torus1_top);
-  sphere2.transform(sphere2_middle);
-  sphere3.transform(sphere3_bottom);
-
-  myrt::sdfs::hard_union unite_torus_fractal;
-  unite_torus_fractal.set_left(torus1).set_right(fractal);
-
-  myrt::sdfs::smooth_union unite_1_2;
-  unite_1_2.set_left(unite_torus_fractal).set_right(sphere2);
-
-  myrt::sdfs::smooth_union unite_12_3;
-  unite_12_3.set_left(unite_1_2).set_right(sphere3);
-
-  myrt::sdf_host host(unite_12_3.get_pointer());
-
-  // Step 2: set parameter values
-  torus1.set(myrt::sdfs::torus::material, host, 0);
-  sphere2.set(myrt::sdfs::sphere::material, host, 1);
-  sphere3.set(myrt::sdfs::sphere::material, host, 2);
-  fractal.set(myrt::sdfs::menger_fractal::material, host, 3);
-  torus1.set(myrt::sdfs::torus::radius_small, host, 0.3f);
-  torus1.set(myrt::sdfs::torus::radius_large, host, 1.2f);
-  sphere2.set(myrt::sdfs::sphere::radius, host, 0.8f);
-  sphere3.set(myrt::sdfs::sphere::radius, host, 1.3f);
-  fractal.set(myrt::sdfs::menger_fractal::size, host, rnu::vec3(1, 1, 1));
-  torus1_top.set(myrt::sdfs::translate::offset, host, rnu::vec3(0.8, 1.9, 0));
-  fractal_offset.set(myrt::sdfs::translate::offset, host, rnu::vec3(1.9, 2.1, 0));
-  sphere2_middle.set(myrt::sdfs::translate::offset, host, rnu::vec3(0, 0.95, 0));
-  sphere3_bottom.set(myrt::sdfs::translate::offset, host, rnu::vec3(0, -0.6, 0));
-  unite_1_2.set(myrt::sdfs::smooth_union::factor, host, 0.1f);
-  unite_12_3.set(myrt::sdfs::smooth_union::factor, host, 0.1f);
-
-  std::string str = "float buf[" + std::to_string(host.buf.size()) + "] = float[" + std::to_string(host.buf.size()) + "](";
+  /*std::string str = "float buf[" + std::to_string(host.buf.size()) + "] = float[" + std::to_string(host.buf.size()) + "](";
   for (auto const& el : host.buf)
     str += std::to_string(el) + ",";
   if(!host.buf.empty())
     str.pop_back();
-  str += ");\n" + host.glsl_string;
+  str += ");\n" + host.glsl_string;*/
   // todo: "generate aabbs?"
   //  -> add to bvh?
   //  -> aabb per sdf?
@@ -119,6 +72,31 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
 {
   myrt::gl::start(*window);
 
+  // Step 1: build sdf scene
+  myrt::sdfs::torus torus1;
+  myrt::sdfs::sphere sphere2;
+  myrt::sdfs::sphere sphere3;
+  myrt::sdfs::menger_fractal fractal;
+
+  myrt::sdfs::translate fractal_offset;
+  myrt::sdfs::translate torus1_top;
+  myrt::sdfs::translate sphere2_middle;
+  myrt::sdfs::translate sphere3_bottom;
+
+  fractal.transform(fractal_offset);
+  torus1.transform(torus1_top);
+  sphere2.transform(sphere2_middle);
+  sphere3.transform(sphere3_bottom);
+
+  myrt::sdfs::hard_union unite_torus_fractal;
+  unite_torus_fractal.set_left(torus1).set_right(fractal);
+
+  myrt::sdfs::smooth_union unite_1_2;
+  unite_1_2.set_left(unite_torus_fractal).set_right(sphere2);
+
+  myrt::sdfs::smooth_union unite_12_3;
+  unite_12_3.set_left(unite_1_2).set_right(sphere3);
+
   float focus = 10.0f;
   myrt::scene scene;
   myrt::pathtracer pathtracer;
@@ -126,10 +104,38 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
   auto objects = load_object_file(scene, "podium.obj");
   auto [cubemap, cube_sampler] = load_cubemap();
 
+  myrt::sdf_object abstract_art_sdf;
+  abstract_art_sdf.name = "Abstract Art";
+  abstract_art_sdf.sdf = scene.push_sdf(myrt::sdf_info_t{ .root = unite_12_3.get_pointer() });
+
+
+  auto& host = scene.lock_sdf_host(abstract_art_sdf.sdf);
+  // Step 2: set parameter values
+  torus1.set(myrt::sdfs::torus::material, host, 0);
+  sphere2.set(myrt::sdfs::sphere::material, host, 1);
+  sphere3.set(myrt::sdfs::sphere::material, host, 2);
+  fractal.set(myrt::sdfs::menger_fractal::material, host, 3);
+  torus1.set(myrt::sdfs::torus::radius_small, host, 0.3f);
+  torus1.set(myrt::sdfs::torus::radius_large, host, 1.2f);
+  sphere2.set(myrt::sdfs::sphere::radius, host, 0.8f);
+  sphere3.set(myrt::sdfs::sphere::radius, host, 1.3f);
+  fractal.set(myrt::sdfs::menger_fractal::size, host, rnu::vec3(1, 1, 1));
+  torus1_top.set(myrt::sdfs::translate::offset, host, rnu::vec3(0.8, 1.9, 0));
+  fractal_offset.set(myrt::sdfs::translate::offset, host, rnu::vec3(1.9, 2.1, 0));
+  sphere2_middle.set(myrt::sdfs::translate::offset, host, rnu::vec3(0, 0.95, 0));
+  sphere3_bottom.set(myrt::sdfs::translate::offset, host, rnu::vec3(0, -0.6, 0));
+  unite_1_2.set(myrt::sdfs::smooth_union::factor, host, 0.1f);
+  unite_12_3.set(myrt::sdfs::smooth_union::factor, host, 0.1f);
+
+
   bool cubemap_enabled = false;
   bool rr_enabled = false;
   float lens_radius = 100.f;
   int bounces_per_iteration = 8;
+
+  float pg_sphere_radius = 3;
+  float pg_smoothness1 = 0.1f;
+  rnu::vec2 torus_size(0.3, 1.2);
 
   for (auto frame : myrt::gl::next_frame(*window)) {
     if (stop_token.stop_requested())
@@ -137,6 +143,7 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
 
     for (auto& obj : objects)
       obj.enqueue();
+    abstract_art_sdf.enqueue();
 
     if (window->hasFocus() && !ImGui::GetIO().WantCaptureKeyboard) {
       camera.axis(frame.delta_time.count() * (1.f + 5 * sf::Keyboard::isKeyPressed(sf::Keyboard::LShift)),
@@ -161,6 +168,23 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
     pathtracer.set_focus(focus);
     pathtracer.sample_to_display(scene, window->getSize().x, window->getSize().y);
 
+    if (ImGui::Begin("SDF Playground"))
+    {
+      if (ImGui::DragFloat("Sphere radius", &pg_sphere_radius, 0.1f, 0.1f, 100.f))
+      {
+        scene.set_parameter(abstract_art_sdf.sdf, sphere3.get_parameter(sphere3.radius), pg_sphere_radius);
+      }
+      if (ImGui::DragFloat("Smoothness 1", &pg_smoothness1, 0.01f, 0.0f, 100.0f))
+      {
+        scene.set_parameter(abstract_art_sdf.sdf, unite_12_3.get_parameter(unite_12_3.factor), pg_smoothness1);
+      }
+      if (ImGui::DragFloat2("Torus Size", torus_size.data(), 0.01f, 0.0f, 100.0f))
+      {
+        scene.set_parameter(abstract_art_sdf.sdf, torus1.get_parameter(torus1.radius_small), torus_size[0]);
+        scene.set_parameter(abstract_art_sdf.sdf, torus1.get_parameter(torus1.radius_large), torus_size[1]);
+      }
+    }
+    ImGui::End();
 
     ImGui::Begin("Settings");
     ImGui::Text("Samples: %d (%.00f sps)", pathtracer.sample_count(), 1.f / frame.delta_time.count());
@@ -196,7 +220,7 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
     //ImGui::Checkbox("Enable Animation", &animate);
     if (ImGui::Button("Reload Shaders"))
     {
-      pathtracer.reload_shaders();
+      pathtracer.reload_shaders(scene);
     }
     ImGui::End();
 

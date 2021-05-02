@@ -16,6 +16,14 @@ namespace myrt
         int index = 0;
     };
 
+    struct sdf_t {
+      sdf_info_t info;
+      sdf_host host;
+      scene* scene = nullptr;
+      int index = 0;
+      size_t buffer_offset = 0;
+    };
+
     namespace detail
     {
         namespace {
@@ -36,6 +44,7 @@ namespace myrt
         glDeleteBuffers(1, &m_gl_objects.bvh_indices_buffer);
         glDeleteBuffers(1, &m_gl_objects.drawable_buffer);
         glDeleteBuffers(1, &m_gl_objects.materials_buffer);
+        glDeleteBuffers(1, &m_gl_objects.sdf_data_buffer);
         glDeleteBuffers(1, &m_gl_objects.global_bvh_nodes_buffer);
         glDeleteBuffers(1, &m_gl_objects.global_bvh_indices_buffer);
         for (auto const& geometry : m_available_geometries)
@@ -81,6 +90,11 @@ namespace myrt
         m_material_infos.at(material->index) = info;
         m_materials_changed = true;
     }
+    void scene::set_material_parameter(const sdf_pointer& sdf, std::shared_ptr<int_param> const& parameter, material_pointer material)
+    {
+      m_sdf_buffer_changed = true;
+      lock_sdf_host(sdf).set_value(parameter, material->index);
+    }
     void scene::erase_material_indirect(const material_pointer& material) {
         m_erase_on_prepare_materials.push_back(material);
     }
@@ -104,6 +118,11 @@ namespace myrt
             std::iter_swap(iter, std::prev(m_available_materials.end()));
             m_available_materials.pop_back();
         }
+    }
+    sdf_host& scene::lock_sdf_host(const sdf_pointer& sdf)
+    {
+      sdf->host.override_buffer_ptr(m_sdf_parameter_buffer.data() + sdf->buffer_offset);
+      return sdf->host;
     }
     void scene::erase_geometry_direct(const geometry_pointer& geometry)
     {
@@ -163,6 +182,19 @@ namespace myrt
             });
     }
 
+    scene::sdf_pointer scene::push_sdf(sdf_info_t info)
+    {
+      m_sdfs_changed = true;
+      auto const& ptr = m_available_sdfs.emplace_back(std::make_unique<sdf_t>());
+      ptr->index = static_cast<int>(m_available_sdfs.size()) - 1;
+      ptr->info = std::move(info);
+      ptr->scene = this;
+      ptr->host = sdf_host(ptr->info.root, false);
+      ptr->buffer_offset = m_sdf_parameter_buffer.size();
+      m_sdf_parameter_buffer.resize(ptr->host.buffer_size);
+      return ptr;
+    }
+
     scene::scene() {
         glCreateBuffers(1, &m_gl_objects.indices_buffer);
         glCreateBuffers(1, &m_gl_objects.vertices_buffer);
@@ -171,6 +203,7 @@ namespace myrt
         glCreateBuffers(1, &m_gl_objects.bvh_indices_buffer);
         glCreateBuffers(1, &m_gl_objects.drawable_buffer);
         glCreateBuffers(1, &m_gl_objects.materials_buffer);
+        glCreateBuffers(1, &m_gl_objects.sdf_data_buffer);
         glCreateBuffers(1, &m_gl_objects.global_bvh_nodes_buffer);
         glCreateBuffers(1, &m_gl_objects.global_bvh_indices_buffer);
 
@@ -268,8 +301,9 @@ namespace myrt
         return h;
     }
 
-    bool scene::prepare() {
-        bool has_changed = false;
+    scene::prepare_result_t scene::prepare() {
+
+      prepare_result_t result;
         const auto fill_buffer = [this](auto buffer, auto const& vector) {
             glNamedBufferData(buffer, detail::vector_bytes(vector), vector.data(), GL_DYNAMIC_DRAW);
         };
@@ -280,7 +314,7 @@ namespace myrt
             fill_buffer(m_gl_objects.global_bvh_nodes_buffer, m_global_bvh->nodes());
             fill_buffer(m_gl_objects.global_bvh_indices_buffer, m_global_bvh->reordered_indices());
             glNamedBufferData(m_gl_objects.drawable_buffer, detail::vector_bytes(m_drawables), m_drawables.data(), GL_DYNAMIC_DRAW);
-            has_changed = true;
+            result.drawables_changed = true;
         }
         m_drawables.clear();
         m_drawable_aabbs.clear();
@@ -289,7 +323,7 @@ namespace myrt
         {
             m_materials_changed = false;
             fill_buffer(m_gl_objects.materials_buffer, m_material_infos);
-            has_changed = true;
+            result.materials_changed = true;
         }
         if (m_geometries_changed)
         {
@@ -299,7 +333,7 @@ namespace myrt
             fill_buffer(m_gl_objects.normals_buffer, m_normals);
             fill_buffer(m_gl_objects.bvh_nodes_buffer, m_bvh_nodes);
             fill_buffer(m_gl_objects.bvh_indices_buffer, m_bvh_indices);
-            has_changed = true;
+            result.geometries_changed = true;
         }
         if (!m_erase_on_prepare.empty() || !m_erase_on_prepare_materials.empty())
             printf("Erasing %d geometries and %d materials...\n", int(m_erase_on_prepare.size()), int(m_erase_on_prepare_materials.size()));
@@ -307,7 +341,7 @@ namespace myrt
             for (auto& to_erase : m_erase_on_prepare)
             {
                 erase_geometry_direct(to_erase);
-                has_changed = true;
+                result.geometries_changed = true;
             }
             m_erase_on_prepare.clear();
             m_last_drawable_hash = 0;
@@ -316,16 +350,35 @@ namespace myrt
             for (auto& to_erase : m_erase_on_prepare_materials)
             {
                 erase_material_direct(to_erase);
-                has_changed = true;
+                result.materials_changed = true;
             }
             m_erase_on_prepare_materials.clear();
             m_last_drawable_hash = 0;
         }
-        return has_changed;
+        if (m_sdfs_changed || m_sdf_buffer_changed)
+        {
+          fill_buffer(m_gl_objects.sdf_data_buffer, m_sdf_parameter_buffer);
+        }
+        result.sdfs_changed = m_sdfs_changed;
+        result.sdf_buffer_changed = m_sdf_buffer_changed;
+
+        m_sdfs_changed = false;
+        m_sdf_buffer_changed = false;
+
+        return result;
     }
 
-    bool scene::prepare_and_bind() {
-        const bool has_changed = prepare();
+    void scene::enqueue(sdf_t const* sdf, rnu::mat4 const& transformation)
+    {
+    }
+
+    void scene::enqueue(const sdf_pointer& sdf, rnu::mat4 const& transformation)
+    {
+      enqueue(sdf.get(), transformation);
+    }
+
+    scene::prepare_result_t scene::prepare_and_bind() {
+        const auto result = prepare();
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, buffer_binding_bvh_nodes, m_gl_objects.bvh_nodes_buffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, buffer_binding_bvh_indices, m_gl_objects.bvh_indices_buffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, buffer_binding_indices, m_gl_objects.indices_buffer);
@@ -335,7 +388,8 @@ namespace myrt
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, buffer_binding_global_bvh_nodes, m_gl_objects.global_bvh_nodes_buffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, buffer_binding_global_bvh_indices, m_gl_objects.global_bvh_indices_buffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, buffer_binding_materials, m_gl_objects.materials_buffer);
-        return has_changed;
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, buffer_binding_sdf_data, m_gl_objects.sdf_data_buffer);
+        return result;
     }
 
     void geometric_object::enqueue() const
@@ -344,5 +398,12 @@ namespace myrt
         {
             geometry->scene->enqueue(geometry, material, transformation);
         }
+    }
+    void sdf_object::enqueue() const
+    {
+      if (show && sdf && sdf->scene)
+      {
+        sdf->scene->enqueue(sdf, transformation);
+      }
     }
 }

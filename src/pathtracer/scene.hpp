@@ -8,6 +8,7 @@
 #include <unordered_set>
 #include <glad/glad.h>
 #include <experimental/generator>
+#include "sdf.hpp"
 
 namespace myrt
 {
@@ -19,6 +20,12 @@ namespace myrt
         index_type bvh_index_base_index;
         index_type indices_base_index;
         index_type points_base_index;
+    };
+
+    struct sdf_info_t {
+      using id_type = detail::default_index_type;
+
+      std::shared_ptr<sdf_instruction> root;
     };
 
     struct material_info_t
@@ -36,6 +43,7 @@ namespace myrt
 
     struct geometry_t;
     struct material_t;
+    struct sdf_t;
 
     struct geometric_object
     {
@@ -48,11 +56,31 @@ namespace myrt
       void enqueue() const;
     };
 
+    struct sdf_object 
+    {
+      std::string name;
+      std::shared_ptr<sdf_t> sdf;
+      rnu::mat4 transformation;
+      bool show = true;
+
+      void enqueue() const;
+    };
+
     class scene
     {
     public:
         using geometry_pointer = std::shared_ptr<geometry_t>;
         using material_pointer = std::shared_ptr<material_t>;
+        using sdf_pointer = std::shared_ptr<sdf_t>;
+
+        struct prepare_result_t
+        {
+          bool materials_changed = false;
+          bool geometries_changed = false;
+          bool drawables_changed = false;
+          bool sdfs_changed = false;
+          bool sdf_buffer_changed = false;
+        };
 
         constexpr static unsigned buffer_binding_bvh_nodes = 0;
         constexpr static unsigned buffer_binding_bvh_indices = 1;
@@ -60,6 +88,7 @@ namespace myrt
         constexpr static unsigned buffer_binding_vertices = 3;
         constexpr static unsigned buffer_binding_normals = 4;
         constexpr static unsigned buffer_binding_drawables = 5;
+        constexpr static unsigned buffer_binding_sdf_data = 9;
 
         constexpr static unsigned buffer_binding_global_bvh_nodes = 6;
         constexpr static unsigned buffer_binding_global_bvh_indices = 7;
@@ -76,13 +105,23 @@ namespace myrt
             std::span<point_type const> normals
         );
         [[nodiscard]] material_pointer push_material(material_info_t info);
+        [[nodiscard]] sdf_pointer push_sdf(sdf_info_t info);
 
         void enqueue(geometry_t const* geometry, material_t const* material, rnu::mat4 const& transformation);
         void enqueue(const geometry_pointer& geometry, const material_pointer& material, rnu::mat4 const& transformation);
-        bool prepare_and_bind();
+
+        void enqueue(sdf_t const* geometry, rnu::mat4 const& transformation);
+        void enqueue(const sdf_pointer& geometry, rnu::mat4 const& transformation);
+
+        prepare_result_t prepare_and_bind();
 
         [[nodiscard]] material_info_t info_of(material_pointer const& material) const;
         void update_material(material_pointer const& material, const material_info_t& info);
+
+        void set_material_parameter(const sdf_pointer& sdf, std::shared_ptr<int_param> const& parameter, material_pointer material);
+
+        template<typename T>
+        void set_parameter(const sdf_pointer& sdf, std::shared_ptr<sdf_parameter> const& parameter, T&& value);
 
         struct hit {
             size_t index;
@@ -93,14 +132,17 @@ namespace myrt
         const material_pointer& default_material() const;
 
         [[nodiscard]] decltype(auto) materials() const noexcept { return m_available_materials; }
+        [[nodiscard]] decltype(auto) sdfs() const noexcept { return m_available_sdfs; }
 
+      sdf_host& lock_sdf_host(const sdf_pointer& sdf);
     private:
+
         void erase_geometry_direct(const geometry_pointer& geometry);
         void erase_geometry_indirect(const geometry_pointer& geometry);
         void erase_material_direct(const material_pointer& material);
         void erase_material_indirect(const material_pointer& material);
 
-        bool prepare();
+        prepare_result_t prepare();
         struct drawable_geometry_t
         {
             rnu::mat4 transformation;
@@ -125,6 +167,7 @@ namespace myrt
             GLuint bvh_indices_buffer = 0;
             GLuint drawable_buffer = 0;
             GLuint materials_buffer = 0;
+            GLuint sdf_data_buffer = 0;
 
             GLuint global_bvh_nodes_buffer = 0;
             GLuint global_bvh_indices_buffer = 0;
@@ -138,6 +181,7 @@ namespace myrt
          
         std::vector<geometry_pointer> m_available_geometries;
         std::vector<material_pointer> m_available_materials;
+        std::vector<sdf_pointer> m_available_sdfs;
         std::vector<std::unique_ptr<bvh>> m_object_bvhs;
         std::vector<geometry_pointer> m_erase_on_prepare;
         std::vector<material_pointer> m_erase_on_prepare_materials;
@@ -148,10 +192,20 @@ namespace myrt
         std::vector<aligned_node_t> m_bvh_nodes;
         std::vector<index_type> m_bvh_indices;
         std::vector<material_info_t> m_material_infos;
+        std::vector<float> m_sdf_parameter_buffer;
 
         std::unique_ptr<bvh> m_global_bvh;
         material_pointer m_default_material;
         bool m_materials_changed = false;
         bool m_geometries_changed = false;
+        bool m_sdfs_changed = false;
+        bool m_sdf_buffer_changed = false;
     };
+
+    template<typename T>
+    inline void scene::set_parameter(const sdf_pointer& sdf, std::shared_ptr<sdf_parameter> const& parameter, T&& value)
+    {
+      m_sdf_buffer_changed = true;
+      lock_sdf_host(sdf).set_value(parameter, value);
+    }
 }
