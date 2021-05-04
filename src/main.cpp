@@ -6,11 +6,61 @@
 #include "gl.hpp"
 #include <stb_image.h>
 
+#include "thread_pool.hpp"
+
+namespace stbi
+{
+  template<typename T>
+  struct deleter {
+    void operator()(T* data) const
+    {
+      stbi_image_free(data);
+    }
+  };
+
+  struct image_info {
+    int width = 0;
+    int height = 0;
+    int channels = 0;
+    bool valid = false;
+
+    image_info(std::filesystem::path const& file) {
+      valid = 0 == stbi_info(file.string().c_str(), &width, &height, &channels);
+    }
+
+  protected:
+    image_info() = default;
+  };
+
+  template<typename T>
+  using image_data = std::unique_ptr<T[], deleter<T>>;
+
+  struct float_image : image_info
+  {
+    float_image(std::filesystem::path const& file, int desired_channels = 0) {
+      data = image_data<float>{ stbi_loadf(file.string().c_str(), &width, &height, &channels, desired_channels) };
+      channels = desired_channels;
+    }
+
+    image_data<float> data;
+  };
+
+  struct ldr_image : image_info
+  {
+    ldr_image(std::filesystem::path const& file, int desired_channels = 0) {
+      data = image_data<stbi_uc>{ stbi_load(file.string().c_str(), &width, &height, &channels, desired_channels) };
+      channels = desired_channels;
+    }
+
+    image_data<stbi_uc> data;
+  };
+}
+
 const static std::filesystem::path res_dir = "../../../res";
 
 void render_function(std::stop_token stop_token, sf::RenderWindow* window);
 std::vector<myrt::geometric_object> load_object_file(myrt::scene& scene, std::filesystem::path const& path, float import_scale = 1.0f);
-std::pair<GLuint, GLuint> load_cubemap();
+std::pair<GLuint, GLuint> load_cubemap(std::filesystem::path folder);
 GLuint load_bokeh();
 float focus = 10.0f;
 
@@ -51,34 +101,70 @@ myrt::scene::material_pointer create_random_material(myrt::scene& scene)
 
 void render_function(std::stop_token stop_token, sf::RenderWindow* window)
 {
+  myrt::thread_pool loading_pool;
   myrt::gl::start(*window);
 
   myrt::scene scene;
   myrt::pathtracer pathtracer;
   rnu::cameraf camera(rnu::vec3{ 0.0f, 0.0f, -15.f });
-  auto objects = load_object_file(scene, "podium.obj");
-  auto [cubemap, cube_sampler] = load_cubemap();
-  auto bokeh = load_bokeh();
+  myrt::async_resource<std::vector<myrt::geometric_object>> objects_resource(loading_pool, [&] { sf::Context context; return load_object_file(scene, "podium.obj"); });
+  myrt::async_resource<std::pair<GLuint, GLuint>> cube_resource(loading_pool, [] { sf::Context context; return load_cubemap("christmas_photo"); });
+
+  GLuint bokeh = load_bokeh();
+  myrt::scene::material_pointer texmat;
+  myrt::sdf_object abstract_art_sdf;
+
+  myrt::async_resource<std::vector<int>> items{ {1, 2, 3, 4, 5} };
 
   myrt::sdf::vertical_capsule capsule(3.f, 0.5f);
   myrt::sdf::sphere sphere(1.f);
-  sphere.transform(myrt::sdf::translate(rnu::vec3(0.5, 0, 0.5)).transform(myrt::sdf::mirror_x{}));
+  sphere.transform(myrt::sdf::translate(rnu::vec3(0.5, 0, 0.5)).transform(myrt::sdf::mirror_axis{ 0 }));
 
   myrt::sdf::smooth_union unite(0.3f);
   unite.apply(sphere, capsule);
 
   myrt::sdf::sphere sphere2;
-  sphere2.link_parameter(0, sphere.get_parameter(sphere.radius));
-  sphere2.transform(myrt::sdf::translate(rnu::vec3(0.5, 3, 0.5)).transform(myrt::sdf::mirror_x{}));
+  sphere2.link_parameter(sphere2[sphere.radius], sphere[sphere.radius]);
+  sphere2.transform(myrt::sdf::translate(rnu::vec3(0.5, 3, 0.5)).transform(myrt::sdf::mirror_axis{ 0 }));
   auto root = myrt::sdf::smooth_union{}.apply(sphere2, unite);
-  root.link_parameter(0, unite.get_parameter(unite.factor));
+  root.link_parameter(root[unite.factor], unite[unite.factor]);
 
-  myrt::sdf_object abstract_art_sdf;
+  {
+    GLuint texture{};
+    glCreateTextures(GL_TEXTURE_2D, 1, &texture);
+
+    uint32_t sampler;
+    glCreateSamplers(1, &sampler);
+    glSamplerParameterf(sampler, GL_TEXTURE_MAX_ANISOTROPY, 16.f);
+    glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glSamplerParameteri(sampler, GL_TEXTURE_WRAP_R, GL_REPEAT);
+    glSamplerParameteri(sampler, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glSamplerParameteri(sampler, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+    stbi::ldr_image bokeh(res_dir / "uvcheck.png", 3);
+    glTextureStorage2D(texture, 1, GL_RGB8, bokeh.width, bokeh.height);
+    glTextureSubImage2D(texture, 0, 0, 0, bokeh.width, bokeh.height, GL_RGB, GL_UNSIGNED_BYTE, bokeh.data.get());
+
+    auto handle = glGetTextureSamplerHandleARB(texture, sampler);
+    glMakeTextureHandleResidentARB(handle);
+
+    std::uniform_real_distribution<float> const distribution(0.0, 1.0);
+    texmat = scene.push_material({
+              .albedo_rgba = rnu::vec4ui8(distribution(twister) * 255, distribution(twister) * 255, distribution(twister) * 255, 255),
+              .ior = distribution(twister) + 1.0f,
+              .roughness = distribution(twister),
+              .metallic = distribution(twister),
+              .has_albedo_texture = true,
+              .albedo_texture = handle
+      });
+  }
+
   abstract_art_sdf.name = "Abstract Art";
   abstract_art_sdf.sdf = scene.push_sdf(myrt::sdf_info_t{ .root = root.get_pointer() });
   abstract_art_sdf.set(capsule.get_parameter(capsule.material), 1);
   abstract_art_sdf.set(sphere.get_parameter(sphere.material), 2);
-  abstract_art_sdf.set(sphere2.get_parameter(sphere2.material), 3);
+  scene.set_material_parameter(abstract_art_sdf.sdf, sphere2[sphere2.material], texmat);
 
   bool cubemap_enabled = false;
   bool bokeh_enabled = false;
@@ -88,6 +174,7 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
 
   int march_steps = 400;
   int march_eps_exp = 6;
+  float march_eps_fac = 0.75f;
 
   float pg_sphere_radius = 3;
   float pg_smoothness1 = 0.1f;
@@ -97,8 +184,9 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
     if (stop_token.stop_requested())
       break;
 
-    for (auto& obj : objects)
-      obj.enqueue();
+    for (auto& obj : objects_resource.iterate())
+      obj->enqueue();
+
     abstract_art_sdf.enqueue();
 
     if (window->hasFocus() && !ImGui::GetIO().WantCaptureKeyboard) {
@@ -128,16 +216,16 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
     {
       if (ImGui::DragFloat("Sphere radius", &pg_sphere_radius, 0.01f, 0.1f, 100.f))
       {
-        scene.set_parameter(abstract_art_sdf.sdf, sphere.get_parameter(sphere.radius), pg_sphere_radius);
+        scene.set_parameter(abstract_art_sdf.sdf, sphere[sphere.radius], pg_sphere_radius);
       }
       if (ImGui::DragFloat("Smoothness 1", &pg_smoothness1, 0.01f, 0.0f, 100.0f))
       {
-        scene.set_parameter(abstract_art_sdf.sdf, unite.get_parameter(unite.factor), pg_smoothness1);
+        scene.set_parameter(abstract_art_sdf.sdf, unite[unite.factor], pg_smoothness1);
       }
       if (ImGui::DragFloat2("Capsule Size", torus_size.data(), 0.01f, 0.0f, 100.0f))
       {
-        scene.set_parameter(abstract_art_sdf.sdf, capsule.get_parameter(capsule.height), torus_size[0]);
-        scene.set_parameter(abstract_art_sdf.sdf, capsule.get_parameter(capsule.radius), torus_size[1]);
+        scene.set_parameter(abstract_art_sdf.sdf, capsule[capsule.height], torus_size[0]);
+        scene.set_parameter(abstract_art_sdf.sdf, capsule[capsule.radius], torus_size[1]);
       }
     }
     ImGui::End();
@@ -145,44 +233,59 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
     ImGui::Begin("Settings");
     ImGui::Text("Samples: %d (%.00f sps)", pathtracer.sample_count(), 1.f / frame.delta_time.count());
     if (ImGui::Button("Restart Sampling"))
-      pathtracer.invalidate_counter();
-    if (ImGui::Checkbox("Enable Cubemap", &cubemap_enabled))
-    {
-      if (cubemap_enabled)
-        pathtracer.set_cubemap(myrt::pathtracer::cubemap_texture{ cubemap, cube_sampler });
-      else
-        pathtracer.set_cubemap(std::nullopt);
-    }
-     if (ImGui::Checkbox("Enable Bokeh", &bokeh_enabled))
-     {
-       if (bokeh_enabled)
-         pathtracer.set_bokeh_texture(bokeh);
-       else
-         pathtracer.set_bokeh_texture(std::nullopt);
-     }
-    if (ImGui::Checkbox("Enable Russian Roulette", &rr_enabled))
-    {
-      pathtracer.set_enable_russian_roulette(rr_enabled);
-    }
-    if (ImGui::DragInt("Bounces Per Iteration", &bounces_per_iteration, 0.1f, 1, 50))
-    {
-      pathtracer.set_max_bounces(bounces_per_iteration);
-    }
-    if (ImGui::DragFloat("Lens Radius", &lens_radius, 0.1f, 0.0f, 1000.0f))
-    {
-      pathtracer.set_lens_radius(lens_radius);
-    }
-    if (ImGui::DragInt("March Steps", &march_steps, 0.1f, 1, 10000)) {
-      pathtracer.set_sdf_marching_steps(march_steps);
-    }
-    if (ImGui::DragInt("March eps (1e-...)", &march_eps_exp, 0.1f, 0, 10)) {
-      pathtracer.set_sdf_marching_epsilon(1.0 / std::pow(10, march_eps_exp));
-    }
+    pathtracer.invalidate_counter();
+    ImGui::Checkbox("Enable Cubemap", &cubemap_enabled);
 
-    if (ImGui::Button("Reload Shaders"))
-    {
-      pathtracer.reload_shaders(scene);
+    if (cubemap_enabled)
+      cube_resource.current([&](auto const& cur) { pathtracer.set_cubemap(myrt::pathtracer::cubemap_texture{ cur.first, cur.second }); });
+    else
+      pathtracer.set_cubemap(std::nullopt);
+
+    if (cube_resource.is_ready()) {
+      if (ImGui::Button("Whipple Creek"))
+      {
+        cube_resource.load_resource(loading_pool, [] { sf::Context context; return load_cubemap("whipple_creek"); });
+      }
+      if (ImGui::Button("christmas_photo"))
+      {
+        cube_resource.load_resource(loading_pool, [] { sf::Context context; return load_cubemap("christmas_photo"); });
+      }
     }
+    else
+    {
+      ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.0f, 1.0f), "Loading Cubemap...");
+    }
+    if (ImGui::Checkbox("Enable Bokeh", &bokeh_enabled))
+    {
+      if (bokeh_enabled)
+        pathtracer.set_bokeh_texture(bokeh);
+      else
+        pathtracer.set_bokeh_texture(std::nullopt);
+    }
+    if (ImGui::Checkbox("Enable Russian Roulette", &rr_enabled))
+      pathtracer.set_enable_russian_roulette(rr_enabled);
+
+    if (ImGui::DragInt("Bounces Per Iteration", &bounces_per_iteration, 0.1f, 1, 50))
+      pathtracer.set_max_bounces(bounces_per_iteration);
+
+    if (ImGui::DragFloat("Lens Radius", &lens_radius, 0.1f, 0.0f, 1000.0f))
+      pathtracer.set_lens_radius(lens_radius);
+
+    if (ImGui::DragInt("March Steps", &march_steps, 0.1f, 1, 10000))
+      pathtracer.set_sdf_marching_steps(march_steps);
+
+    if (ImGui::DragInt("March eps (1e-...)", &march_eps_exp, 0.1f, 0, 10))
+      pathtracer.set_sdf_marching_epsilon(march_eps_fac * static_cast<float>(1.0 / std::pow(10, march_eps_exp)));
+    if (ImGui::DragFloat("March eps fac", &march_eps_fac, 0.01f, 0.0f, 10.0f))
+      pathtracer.set_sdf_marching_epsilon(march_eps_fac * static_cast<float>(1.0 / std::pow(10, march_eps_exp)));
+
+    if (pathtracer.is_compiling())
+    {
+      ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.0f, 1.0f), "Shaders are compiling...");
+    }
+    else if (ImGui::Button("Reload Shaders"))
+      pathtracer.reload_shaders(scene);
+
     ImGui::End();
 
     if (ImGui::Begin("Materials")) {
@@ -216,11 +319,14 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
 
     if (ImGui::Begin("Objects"))
     {
-      for (auto& obj : objects)
+      for(auto obj : objects_resource.iterate())
       {
-        ImGui::PushID(&obj);
-        ImGui::Text("%s", obj.name.c_str());
-        ImGui::Checkbox("Show", &obj.show);
+        ImGui::PushID(obj);
+        ImGui::Text("%s", obj->name.c_str());
+        if (ImGui::Checkbox("Show", &obj->show))
+        {
+          std::cout << "map";
+        }
         ImGui::PopID();
       }
       {
@@ -270,17 +376,16 @@ std::vector<myrt::geometric_object> load_object_file(myrt::scene& scene, std::fi
 }
 
 GLuint load_bokeh() {
-  GLuint bokeh{};
-  glCreateTextures(GL_TEXTURE_2D, 1, &bokeh);
-  int bw{}, bh{}, bc{};
-  stbi_uc* img_data = stbi_load((res_dir / "bokeh_gear.jpg").string().c_str(), &bw, &bh, &bc, 3);
-  glTextureStorage2D(bokeh, 1, GL_RGB8, bw, bh);
-  glTextureSubImage2D(bokeh, 0, 0, 0, bw, bh, GL_RGB, GL_UNSIGNED_BYTE, img_data);
-  stbi_image_free(img_data);
-  return bokeh;
+  GLuint texture{};
+  glCreateTextures(GL_TEXTURE_2D, 1, &texture);
+
+  stbi::ldr_image bokeh(res_dir / "bokeh_gear.jpg");
+  glTextureStorage2D(texture, 1, GL_RGB8, bokeh.width, bokeh.height);
+  glTextureSubImage2D(texture, 0, 0, 0, bokeh.width, bokeh.height, GL_RGB, GL_UNSIGNED_BYTE, bokeh.data.get());
+  return texture;
 }
 
-std::pair<GLuint, GLuint> load_cubemap()
+std::pair<GLuint, GLuint> load_cubemap(std::filesystem::path folder)
 {
   uint32_t cubemap;
   uint32_t cube_sampler;
@@ -294,39 +399,30 @@ std::pair<GLuint, GLuint> load_cubemap()
   glSamplerParameteri(cube_sampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glSamplerParameteri(cube_sampler, GL_TEXTURE_CUBE_MAP_SEAMLESS, true);
 
-  std::filesystem::path folder = "whipple_creek";
+  stbi::image_info info(res_dir / folder / "posx.hdr");
 
-  int w, h, c;
-  // face 1
-  float* img = stbi_loadf((res_dir / folder / "posx.hdr").string().c_str(), &w, &h, &c, 3);
-  const int num_mips = static_cast<int>(1 + floor(log(float(std::max(w, h)))));
-  glTextureStorage3D(cubemap, num_mips, GL_RGB16F, w, h, 6);
-  glTextureSubImage3D(cubemap, 0, 0, 0, 0, w, h, 1, GL_RGB, GL_FLOAT, img);
-  stbi_image_free(img);
+  stbi::float_image posx(res_dir / folder / "posx.hdr", 3);
+  glTextureStorage3D(cubemap, 1, GL_RGB16F, info.width, info.height, 6);
+  glTextureSubImage3D(cubemap, 0, 0, 0, 0, info.width, info.height, 1, GL_RGB, GL_FLOAT, posx.data.get());
 
-  img = stbi_loadf((res_dir / folder / "negx.hdr").string().c_str(), &w, &h, &c, 3);
-  glTextureSubImage3D(cubemap, 0, 0, 0, 1, w, h, 1, GL_RGB, GL_FLOAT, img);
-  stbi_image_free(img);
+  stbi::float_image negx(res_dir / folder / "negx.hdr", 3);
+  glTextureSubImage3D(cubemap, 0, 0, 0, 1, info.width, info.height, 1, GL_RGB, GL_FLOAT, negx.data.get());
 
-  img = stbi_loadf((res_dir / folder / "posy.hdr").string().c_str(), &w, &h, &c, 3);
-  glTextureSubImage3D(cubemap, 0, 0, 0, 2, w, h, 1, GL_RGB, GL_FLOAT, img);
-  stbi_image_free(img);
+  stbi::float_image posy(res_dir / folder / "posy.hdr", 3);
+  glTextureSubImage3D(cubemap, 0, 0, 0, 2, info.width, info.height, 1, GL_RGB, GL_FLOAT, posy.data.get());
 
-  img = stbi_loadf((res_dir / folder / "negy.hdr").string().c_str(), &w, &h, &c, 3);
-  glTextureSubImage3D(cubemap, 0, 0, 0, 3, w, h, 1, GL_RGB, GL_FLOAT, img);
-  stbi_image_free(img);
+  stbi::float_image negy(res_dir / folder / "negy.hdr", 3);
+  glTextureSubImage3D(cubemap, 0, 0, 0, 3, info.width, info.height, 1, GL_RGB, GL_FLOAT, negy.data.get());
 
-  img = stbi_loadf((res_dir / folder / "posz.hdr").string().c_str(), &w, &h, &c, 3);
-  glTextureSubImage3D(cubemap, 0, 0, 0, 4, w, h, 1, GL_RGB, GL_FLOAT, img);
-  stbi_image_free(img);
+  stbi::float_image posz(res_dir / folder / "posz.hdr", 3);
+  glTextureSubImage3D(cubemap, 0, 0, 0, 4, info.width, info.height, 1, GL_RGB, GL_FLOAT, posz.data.get());
 
-  img = stbi_loadf((res_dir / folder / "negz.hdr").string().c_str(), &w, &h, &c, 3);
-  glTextureSubImage3D(cubemap, 0, 0, 0, 5, w, h, 1, GL_RGB, GL_FLOAT, img);
-  stbi_image_free(img);
-  glGenerateTextureMipmap(cubemap);
+  stbi::float_image negz(res_dir / folder / "negz.hdr", 3);
+  glTextureSubImage3D(cubemap, 0, 0, 0, 5, info.width, info.height, 1, GL_RGB, GL_FLOAT, negz.data.get());
+
   uint32_t view{ 0 };
   glGenTextures(1, &view);
-  glTextureView(view, GL_TEXTURE_CUBE_MAP, cubemap, GL_RGB16F, 0, num_mips, 0, 6);
+  glTextureView(view, GL_TEXTURE_CUBE_MAP, cubemap, GL_RGB16F, 0, 1, 0, 6);
 
   return { view, cube_sampler };
 }

@@ -33,8 +33,10 @@ struct material_info_t
     float metallic;
     float transmission;
     float emission;
+    int has_albedo_texture;
+    sampler2D albedo_texture;
 
-    int aaa[1];
+    int bbb[2];
 };
 
 struct hit_t

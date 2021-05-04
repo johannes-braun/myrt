@@ -126,9 +126,17 @@ namespace myrt
         op, mod, prim
       };
 
+      std::optional<int> find_parameter_index_by_name(std::string const& name) const {
+        auto const it = std::find(begin(param_names), end(param_names), name);
+        if (it == param_names.end())
+          return std::nullopt;
+        return static_cast<int>(std::distance(begin(param_names), it));
+      }
+
       category instruction_category;
       std::string glsl_string;
       std::vector<std::shared_ptr<sdf_parameter_type>> type_params;
+      std::vector<std::string> param_names;
     };
 
     struct sdf_instruction {
@@ -866,6 +874,13 @@ namespace myrt::sdf {
         }
       }
 
+      std::shared_ptr<parameter> get_parameter(std::string const& name) const {
+        auto const index = _ptr->type.find_parameter_index_by_name(name);
+        if (!index.has_value())
+          return nullptr;
+        return _ptr->params[index.value()];
+      }
+
       std::shared_ptr<parameter> get_parameter(size_t index) const {
         if (index >= _ptr->params.size())
           return nullptr;
@@ -880,9 +895,19 @@ namespace myrt::sdf {
         return nullptr;
       }
 
+      std::shared_ptr<parameter> link_parameter(std::shared_ptr<parameter> const& target, std::shared_ptr<parameter> param) {
+        if (!target)
+          return nullptr;
+
+        auto const result = target->link_value_block(0, param, 0).other;
+        for (size_t i = 1; i < target->type->buffer_blocks; ++i) {
+          target->link_value_block(i, param, i);
+        }
+        return result;
+      }
+
       template<typename PType>
-      std::shared_ptr<PType> link_parameter(size_t index, std::shared_ptr<PType> param) requires std::is_base_of_v<parameter, PType> {
-        auto const target = get_parameter<PType>(index);
+      std::shared_ptr<PType> link_parameter(std::shared_ptr<PType> const& target, std::shared_ptr<PType> param) requires std::is_base_of_v<parameter, PType> {
         if (!target)
           return nullptr;
 
@@ -932,7 +957,7 @@ namespace myrt::sdf {
         };
 
         template<size_t Index, typename TValue, typename TParam>
-        std::shared_ptr<TParam> get_parameter(static_parameter<Index, TValue, TParam> const&) {
+        std::shared_ptr<TParam> get_parameter(static_parameter<Index, TValue, TParam> const&) const {
           return get_parameter<TParam>(Index);
         }
 
@@ -945,23 +970,31 @@ namespace myrt::sdf {
         void unlink(static_parameter<Index, TValue, TParam> const&) {
           return unlink_parameter(Index);
         }
+
+        auto operator[](size_t index) const { return get_parameter(index); }
+        auto operator[](std::string const& name) const { return get_parameter(name); }
+        template<size_t Index, typename TValue, typename TParam>
+        auto operator[](static_parameter<Index, TValue, TParam> const& par) const { return get_parameter(par); }
     };
 
     struct basic_type {
-      basic_type(category::category t, std::string_view glsl, std::span<std::shared_ptr<parameter_type> const> params)
+      basic_type(category::category t, std::string_view glsl, std::span<std::shared_ptr<parameter_type> const> params, std::span<std::string const> param_names = {})
       {
         _type = std::make_shared<instruction_type>();
         _type->instruction_category = t;
         _type->glsl_string = glsl;
         _type->type_params.insert(_type->type_params.end(), std::begin(params), std::end(params));
+        _type->param_names.resize(params.size());
+        if(param_names.size() == params.size())
+          _type->param_names.assign(std::begin(param_names), std::end(param_names));
       }
 
-      basic_type(instruction_type::category type, std::string_view glsl, std::initializer_list<std::shared_ptr<parameter_type>> params)
+      basic_type(instruction_type::category type, std::string_view glsl, std::initializer_list<std::shared_ptr<parameter_type>> params, std::initializer_list<std::string> param_names = {})
         :basic_type(type, std::move(glsl), std::span<std::shared_ptr<parameter_type> const>(params)) {
       }
 
-      basic_type(instruction_type::category type, std::string_view glsl, std::shared_ptr<parameter_type> const& param)
-        :basic_type(type, std::move(glsl), std::initializer_list<std::shared_ptr<parameter_type>>{ param }) {
+      basic_type(instruction_type::category type, std::string_view glsl, std::shared_ptr<parameter_type> param, std::string param_name="")
+        :basic_type(type, std::move(glsl), std::initializer_list<std::shared_ptr<parameter_type>>{ std::move(param) }, std::initializer_list<std::string const>{std::move(param_name)}) {
       }
 
       operator std::shared_ptr<instruction_type> const& () const {
@@ -1032,7 +1065,10 @@ namespace myrt::sdf {
 
     struct sphere : prim {
       static inline const basic_type sphere_type = basic_type{
-        instruction_type::category::prim, "inout_material = load_material(in_param1); return length(in_position) - in_param0;", { float_param::type, int_param::type }
+        instruction_type::category::prim, 
+        "inout_material = load_material(in_param1); return length(in_position) - in_param0;", 
+        { float_param::type, int_param::type },
+        { "radius", "material" }
       };
 
       sphere(float radius = 1.0f, int material_index = 0) : prim(sphere_type) {
@@ -1046,7 +1082,8 @@ namespace myrt::sdf {
 
     struct translate : mod {
       static inline const basic_type translate_type = basic_type{
-        instruction_type::category::mod, "return in_position - in_param0;", { vec3_param::type }
+        instruction_type::category::mod, "return in_position - in_param0;", { vec3_param::type },
+        { "offset" }
       };
 
       translate(rnu::vec3 offset = {}) : mod(translate_type) {
@@ -1100,7 +1137,8 @@ inout_material = mix_material(in_material0, in_material1, 1.0-h);
 
 return mix(d2, d1, h) - k * h * (1.0 - h);)";
       static inline const basic_type smooth_union_type = basic_type{
-        instruction_type::category::op, glsl, { float_param::type }
+        instruction_type::category::op, glsl, { float_param::type },
+        { "factor" }
       };
 
       smooth_union(float factor = 0.1f) : op(smooth_union_type) {
@@ -1119,7 +1157,8 @@ inout_material = mix_material(in_material0, in_material1, 1.0-h);
 float h = clamp( 0.5 - 0.5*(d2+d1)/k, 0.0, 1.0 );
 return mix( d2, -d1, h ) + k*h*(1.0-h);)";
       static inline const basic_type smooth_subtraction_type = basic_type{
-        instruction_type::category::op, glsl, { float_param::type }
+        instruction_type::category::op, glsl, { float_param::type },
+        { "factor" }
       };
 
       smooth_subtraction(float factor = 0.1f) : op(smooth_subtraction_type) {
@@ -1138,7 +1177,8 @@ inout_material = mix_material(in_material0, in_material1, 1.0-h);
 float h = clamp( 0.5 - 0.5*(d2-d1)/k, 0.0, 1.0 );
 return mix( d2, d1, h ) + k*h*(1.0-h);)";
       static inline const basic_type smooth_intersection_type = basic_type{
-        instruction_type::category::op, glsl, { float_param::type }
+        instruction_type::category::op, glsl, { float_param::type },
+        { "factor" }
       };
 
       smooth_intersection(float factor = 0.1f) : op(smooth_intersection_type) {
@@ -1155,7 +1195,8 @@ return mix( d2, d1, h ) + k*h*(1.0-h);)";
   vec3 p = in_position;
 inout_material = load_material(in_param1); 
   vec3 q = abs(p) - b;
-  return length(max(q,0.0)) + min(max(q.x,max(q.y,q.z)),0.0);)", {vec3_param::type, int_param::type}
+  return length(max(q,0.0)) + min(max(q.x,max(q.y,q.z)),0.0);)", {vec3_param::type, int_param::type},
+        { "size", "material" }
       };
 
       box(rnu::vec3 size = rnu::vec3{ 1,1,1 }, int material_index = 0) : prim(box_type) {
@@ -1175,7 +1216,8 @@ inout_material = load_material(in_param1);
 inout_material = load_material(in_param2);
   vec3 p = in_position; 
   vec2 q = vec2(length(p.xz)-rlarge,p.y);
-  return length(q)-rsmall;)", {float_param::type, float_param::type, int_param::type}
+  return length(q)-rsmall;)", {float_param::type, float_param::type, int_param::type},
+        { "radius_large", "radius_small", "material" }
       };
 
       torus(float radius_large = 1.f, float radius_small = 0.2f, int material_index = 0) : prim(torus_type) {
@@ -1215,7 +1257,8 @@ inout_material = load_material(in_param0);
 
 		dis *= pow(3., float(-4));
 
-		return dis;)", {int_param::type}
+		return dis;)", {int_param::type},
+        { "material" }
       };
 
       menger_fractal(int material_index = 0) : prim(menger_fractal_type) {
@@ -1228,7 +1271,8 @@ inout_material = load_material(in_param0);
     struct vertical_capsule : prim {
       static inline const basic_type vertical_capsule_type = basic_type{
         instruction_type::category::prim, R"(inout_material = load_material(in_param2); in_position.y -= clamp( in_position.y, 0.0, in_param0 ); return length( in_position ) - in_param1;)",
-        { float_param::type, float_param::type, int_param::type }
+        { float_param::type, float_param::type, int_param::type },
+        { "height", "radius", "material" }
       };
 
       vertical_capsule(float height = 1.0f, float radius = 0.2f, int material = 0) : prim(vertical_capsule_type) {
@@ -1241,12 +1285,17 @@ inout_material = load_material(in_param0);
       [[no_unique_address]] static_parameter<2, int, int_param> material{};
     };
 
-    struct mirror_x : mod {
-      static inline const basic_type mirror_x_type = basic_type{
-        instruction_type::category::mod, R"(in_position.x = abs(in_position.x); return in_position;)",
-        {}
+    struct mirror_axis : mod {
+      static inline const basic_type mirror_axis_type = basic_type{
+        instruction_type::category::mod, R"(in_position[in_param0] = abs(in_position[in_param0]); return in_position;)",
+        { int_param::type },
+        { "axis" }
       };
 
-      mirror_x() : mod(mirror_x_type) {}
+      mirror_axis(int axis) : mod(mirror_axis_type) {
+        this->axis.set_default(_ptr, axis);
+      }
+
+      [[no_unique_address]] static_parameter<0, int, int_param> axis{};
     };
 }

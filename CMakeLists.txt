@@ -17,13 +17,12 @@ add_executable(myrt
     "src/pathtracer/scene.cpp" 
     "src/pathtracer/utils.cpp" "src/obj.hpp" "src/obj.cpp" "src/glsl/color.h" "src/glsl/tonemapping.h"  "src/vectoring/vectoring.hpp" "src/vectoring/distance.hpp"  "src/stb.cpp" 
     "src/main.cpp" 
-    "src/sfml.hpp" "src/gl.hpp" "src/resources.hpp"  "src/pathtracer/sdf.hpp")
+    "src/sfml.hpp" "src/gl.hpp" "src/resources.hpp"  "src/pathtracer/sdf.hpp"
+    "src/glad/glad.cpp" "src/pathtracer/forward_renderer.hpp" "src/thread_pool.hpp" "src/thread_pool.cpp")
 target_compile_features(myrt PUBLIC cxx_std_20)
 
 find_package(SFML 2 COMPONENTS graphics audio main network system window REQUIRED)
 target_link_libraries(myrt PUBLIC Freetype OpenAL OpenGL Vorbis sfml-audio sfml-graphics sfml-main sfml-network sfml-system sfml-window)
-find_package(glad REQUIRED)
-target_link_libraries(myrt PUBLIC glad::glad)
 find_package(Stb REQUIRED)
 target_include_directories(myrt PUBLIC ${Stb_INCLUDE_DIR})
 find_package(imgui CONFIG REQUIRED)

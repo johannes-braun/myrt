@@ -1,5 +1,7 @@
 #version 450 core
 
+#extension GL_ARB_bindless_texture: require
+
 #include "bvh.h"
 #include "interface.h"
 #include "tonemapping.h"
