@@ -18,7 +18,7 @@ add_executable(myrt
     "src/pathtracer/utils.cpp" "src/obj.hpp" "src/obj.cpp" "src/glsl/color.h" "src/glsl/tonemapping.h"  "src/vectoring/vectoring.hpp" "src/vectoring/distance.hpp"  "src/stb.cpp" 
     "src/main.cpp" 
     "src/sfml.hpp" "src/gl.hpp" "src/resources.hpp"  "src/pathtracer/sdf.hpp"
-    "src/glad/glad.cpp" "src/pathtracer/forward_renderer.hpp" "src/thread_pool.hpp" "src/thread_pool.cpp")
+    "src/glad/glad.cpp"  "src/thread_pool.hpp" "src/thread_pool.cpp"  "src/material.hpp" "src/pathtracer/sequential_pathtracer.hpp" "src/pathtracer/sequential_pathtracer.cpp")
 target_compile_features(myrt PUBLIC cxx_std_20)
 
 find_package(SFML 2 COMPONENTS graphics audio main network system window REQUIRED)

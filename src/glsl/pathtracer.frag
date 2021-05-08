@@ -7,16 +7,7 @@
 #include "tonemapping.h"
 #include "brdf.h"
 #include "intersect.h"
-
-vec2 rand_offset2d(float maximum, vec2 right, vec2 up)
-{
-    vec2 rands = vec2(
-        next_random() * 2 * 3.1415926535897f,
-        next_random()
-    );
-
-    return sqrt(rands.y) * maximum * (sin(rands.x) * right + cos(rands.x) * up);
-}
+#include "../pt/random.glsl"
 
 struct light_t
 {
@@ -40,9 +31,9 @@ void main()
     vec4 last_color = texelFetch(u_last_image, ivec2(gl_FragCoord.xy), 0);
     int draw_counter = u_draw_counter;
 
-    init_random();
+    random_init(u_random_texture, ivec2(gl_FragCoord.xy), int(u_draw_counter * 299 + u_random_seed));
     
-    vec2 off = rand_offset2d(1.0f, vec2(0, 1), vec2(1, 0));
+    vec2 off = random_uniform_circle(1.0f);
 
     vec2 tsize = vec2(textureSize(u_last_image, 0));
     vec4 ird = (u_inv_view * u_inv_proj * vec4(((off + gl_FragCoord.xy) / tsize) * 2 - 1, 1, 1));
@@ -57,11 +48,11 @@ void main()
     float path_probability = 1;
 
     int bokeh_tries = 8;
-    vec2 bokeh_offset = rand_offset2d(0.49f, vec2(0, 1), vec2(1, 0));
+    vec2 bokeh_offset = random_uniform_circle(0.49f);
     while(u_has_bokeh && (bokeh_tries == 8 || max(max(path_reflectance.x, path_reflectance.y), path_reflectance.z) < 1e-5) && bokeh_tries-- > 0)
     {
         path_reflectance = textureLod(u_bokeh, vec2(0.5) + bokeh_offset, 0).rgb;
-        bokeh_offset = rand_offset2d(0.49f, vec2(0, 1), vec2(1, 0));
+        bokeh_offset = random_uniform_circle(0.49f);
     }
     
     if(max(max(path_reflectance.x, path_reflectance.y), path_reflectance.z) < 1e-5)
@@ -113,7 +104,7 @@ void main()
             float ior_front = is_incoming ? 1.0 : hit.material.ior;
             float ior_back = is_incoming ? hit.material.ior : 1.0;
 
-            vec4 brdf_randoms = vec4(next_random(), next_random(), next_random(), next_random());
+            vec4 brdf_randoms = vec4(random_next(), random_next(), random_next(), random_next());
 
             clear_result(brdf);
             sample_brdf(true, brdf_randoms, hit.material, hit.position, ray_direction, normal, ior_front, ior_back, brdf);
@@ -124,7 +115,7 @@ void main()
                 break;
             }
 
-            float light_random = next_random();
+            float light_random = random_next();
 
             path_probability *= brdf.pdf;
             path_reflectance *= brdf.reflectance * abs(dot(brdf.continue_direction, normal)) / brdf.pdf;
@@ -132,7 +123,7 @@ void main()
             if(u_enable_russian_roulette && bounces < u_max_bounces - 3)
             {
                 float p = max(max(path_reflectance.x, path_reflectance.y), path_reflectance.z);
-                if(next_random() > p)
+                if(random_next() > p)
                 {
                     path_color = vec3(0);
                     break;
@@ -141,9 +132,9 @@ void main()
             }
 
             // Make light test
-            int light_index = clamp(int(test_lights.length() * next_random()), 0, test_lights.length()-1);
+            int light_index = clamp(int(test_lights.length() * random_next()), 0, test_lights.length()-1);
             {
-                vec3 point_on_light = test_lights[light_index].position + normalize(vec3(next_random(), next_random(), next_random())) * test_lights[light_index].radius * sqrt(next_random());
+                vec3 point_on_light = test_lights[light_index].position + normalize(vec3(random_next(), random_next(), random_next())) * test_lights[light_index].radius * sqrt(random_next());
 
                 vec3 path_to_light = point_on_light - hit.position;
                 vec3 direction_to_light = normalize(path_to_light);

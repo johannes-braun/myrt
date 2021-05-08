@@ -101,8 +101,5 @@ layout(location = 0) out vec4 out_color;
 bool any_hit(vec3 ray_origin, vec3 ray_direction, float max_distance);
 hit_t nearest_hit(vec3 ray_origin, vec3 ray_direction, float max_distance);
 
-void init_random();
-float next_random();
-
 vec3 sample_cosine_hemisphere(vec2 uv);
 vec3 bsdf_local_to_world(const in vec3 vector, const in vec3 normal);

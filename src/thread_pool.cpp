@@ -4,26 +4,28 @@ namespace myrt {
   thread_pool::thread_pool(unsigned concurrency)
   {
     for (unsigned i = 0; i < concurrency; ++i)
-    {
       m_threads.push_back(std::jthread(&thread_loop, this));
-    }
   }
+
   thread_pool::~thread_pool()
   {
     for (auto& thread : m_threads)
       thread.request_stop();
     m_wait_condition.notify_all();
   }
+
   void thread_pool::run_detached(std::function<void()> job)
   {
     std::unique_lock<std::mutex> lock(m_jobs_mutex);
     m_jobs.push_back(std::move(job));
     m_wait_condition.notify_one();
   }
+
   unsigned thread_pool::concurrency() const
   {
     return static_cast<unsigned>(m_threads.size());
   }
+
   void thread_pool::thread_loop(std::stop_token stop_token, thread_pool* self)
   {
     while (!stop_token.stop_requested()) {

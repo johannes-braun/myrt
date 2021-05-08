@@ -1,0 +1,81 @@
+#version 460 core
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+struct generate_output_t {
+  vec3  origin;
+  float random_value;
+  vec3  direction;
+  float pixel_x;
+  vec3  reflectance;
+  float pixel_y;
+  vec4  color;
+  float pdf;
+  float pad[3];
+};
+
+layout(location = 0) uniform mat4 inverse_camera_view;
+layout(location = 1) uniform mat4 inverse_camera_projection;
+layout(location = 2) uniform bool dof_active;
+layout(location = 3) uniform uvec2 image_size;
+layout(location = 4) uniform vec2 lens_size;
+layout(location = 5) uniform float focus;
+layout(location = 6) uniform int random_seed;
+
+layout(binding = 0) uniform sampler1D random_texture;
+layout(binding = 1) uniform sampler2D bokeh_shape;
+layout(binding = 0, std430) restrict writeonly buffer GenerateOutput { generate_output_t generate_output[]; };
+
+#include "random.glsl"
+#include "bokeh.glsl"
+#include "transform.glsl"
+
+bool apply_bokeh(sampler2D mask, inout vec3 origin, inout vec3 direction, out vec3 bokeh_value)
+{
+  bokeh_t bokeh = bokeh_get(mask);
+
+  if(bokeh.amount < 1e-5)
+    return false;
+
+  vec3 original_center = origin + focus * direction;
+  vec3 alternative_direction = transform_local_to_world(normalize(vec3(bokeh.offset * lens_size/2, focus)), direction);
+
+  bokeh_value = bokeh.value;
+  origin = original_center - focus * alternative_direction;
+  direction = alternative_direction;
+  return true;
+}
+
+void main()
+{
+  uvec2 pt = gl_GlobalInvocationID.xy;
+  uint id = pt.y * image_size.x + pt.x;
+  if(pt.x > image_size.x || pt.y > image_size.y)
+  {
+    return;
+  }
+  vec2 pixel = vec2(pt);
+
+  random_init(random_texture, ivec2(pt), random_seed);
+  vec2 off = random_uniform_circle(1.0f) / 2.0;
+
+  vec2 tsize = vec2(image_size);
+  vec4 ray_direction_hom = (inverse_camera_view * inverse_camera_projection * vec4(((off + pixel) / tsize) * 2 - 1, 1, 1));
+  vec3 ray_direction = normalize(ray_direction_hom.xyz);
+  vec3 ray_origin = inverse_camera_view[3].xyz;
+
+  vec3 tint = vec3(1, 1, 1);
+  if(dof_active)
+    apply_bokeh(bokeh_shape, ray_origin, ray_direction, tint);
+
+  generate_output_t result;
+  result.origin = ray_origin;
+  result.direction = ray_direction;
+  result.random_value = random_next();
+  result.reflectance = tint;
+  result.color = vec4(0);
+  result.pixel_x = pixel.x;
+  result.pixel_y = pixel.y;
+  result.pdf = 1.0;
+  generate_output[id] = result;
+}

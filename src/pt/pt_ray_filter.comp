@@ -1,0 +1,62 @@
+#version 460 core
+
+const int group_size = 64;
+layout(local_size_x = group_size) in;
+
+struct trace_output_t {
+  vec3 point;
+  int intersects;
+  vec3 normal;
+  uint generated_ray;
+
+  vec4  material_uv_x;
+  vec4  material_uv_y;
+  ivec4 material_indices;
+  vec4  material_weights;
+};
+
+struct generate_output_t {
+  vec3  origin;
+  float random_value;
+  vec3  direction;
+  float pixel_x;
+  vec3  reflectance;
+  float pixel_y;
+  vec4  color;
+  float pdf;
+  float pad[3];
+};
+
+layout(binding = 0, std430) restrict readonly buffer GenerateOutput { generate_output_t generate_input[]; };
+layout(binding = 1, std430) restrict readonly buffer TraceOutput { trace_output_t trace_output[]; };
+layout(binding = 2, std430) restrict writeonly buffer FilterOutput { generate_output_t filter_output[]; };
+layout(binding = 3, std430) restrict buffer AccessControl { 
+  uint num_elements;
+  uint num_groups_x;
+  uint num_groups_y;
+  uint num_groups_z;
+};
+layout(binding = 4, std430) restrict buffer AccessControlTarget { 
+  uint target_num_elements;
+  uint target_num_groups_x;
+  uint target_num_groups_y;
+  uint target_num_groups_z;
+};
+
+shared uint number_of_elements = 0;
+
+void main() {
+  uint id = gl_GlobalInvocationID.x;
+  if (id >= num_elements)
+  {
+    return;
+  }
+
+  if (trace_output[id].intersects != 0)
+  {
+    uint insert_at = atomicAdd(target_num_elements, 1);
+    filter_output[insert_at] = generate_input[trace_output[id].generated_ray];
+    if(insert_at % group_size == 0)
+      atomicAdd(target_num_groups_x, 1);
+  }
+}

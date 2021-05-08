@@ -1,0 +1,147 @@
+#version 460 core
+
+layout(local_size_x = 64) in;
+
+#include "resample.glsl"
+#include "transform.glsl"
+#include "random.glsl"
+
+struct generate_output_t {
+  vec3  origin;
+  float random_value;
+  vec3  direction;
+  float pixel_x;
+  vec3  reflectance;
+  float pixel_y;
+  vec4  color;
+  float pdf;
+  float pad[3];
+};
+
+struct trace_output_t {
+  vec3 point;
+  int intersects;
+  vec3 normal;
+  uint generated_ray;
+
+  vec4  material_uv_x;
+  vec4  material_uv_y;
+  ivec4 material_indices;
+  vec4  material_weights;
+};
+
+layout(binding = 2, std430) readonly buffer AccessControl { 
+  uint num_elements;
+  uint num_groups_x;
+  uint num_groups_y;
+  uint num_groups_z;
+};
+
+layout(binding = 0, std430) restrict buffer GenerateInput { generate_output_t generate_output[]; };
+layout(binding = 1, std430) restrict readonly buffer TraceOutput { trace_output_t trace_output[]; };
+
+layout(binding = 0, rgba32f) uniform image2D debug_image;
+layout(binding = 1, rgba32f) uniform image2D output_image;
+layout(binding = 0) uniform sampler1D random_texture;
+layout(binding = 1) uniform samplerCube cubemap;
+
+layout(location = 0) uniform uint sample_index;
+layout(location = 1) uniform bool force_write_color;
+layout(location = 2) uniform int random_sample;
+
+vec3 unreal(vec3 x) {
+  return x / (x + 0.155) * 1.019;
+}
+
+float unreal(float x) {
+  return x / (x + 0.155) * 1.019;
+}
+vec3 tonemap(vec3 col)
+{
+  col = clamp(col, 0, 10);
+  return unreal(col);
+}
+
+void accumulate_color(vec4 new_color, ivec2 pixel)
+{
+  new_color.rgb = tonemap(new_color.rgb);
+
+  vec4 last_color = imageLoad(output_image, pixel);
+  vec4 comparison = last_color;
+  if(sample_index == 0)
+  {
+    last_color = new_color;
+    comparison = vec4(1);
+  }
+  else
+  {
+    last_color = mix(last_color, new_color, 1.0 / float(sample_index + 1));
+    comparison = vec4(abs(last_color - comparison));
+  }
+  imageStore(debug_image, pixel, comparison);
+  imageStore(output_image, pixel, last_color);
+}
+
+void main() {
+  uint id = gl_GlobalInvocationID.x;
+  if(id >= num_elements)
+  {
+    return;
+  }
+
+  trace_output_t trace = trace_output[id];
+  generate_output_t gen = generate_output[id];
+  
+  ivec2 pixel = ivec2(gen.pixel_x, gen.pixel_y);
+  if(trace.intersects != 0)
+  {
+    random_init(random_texture, pixel, random_sample);
+    float rx = random_value(int(int(56128966 * gen.random_value) + 20945293*id));
+    float ry = random_value(int(int(12233432 * gen.random_value) + 74867839*id));
+
+    vec3 diff = vec3(1);
+    switch(trace.material_indices[0])
+    {
+      case 0: diff = vec3(1, 0, 0.3); break;
+      case 1: diff = vec3(0, 1, 0.3); break;
+      case 2: diff = vec3(0.3, 0.1, 1.0); break;
+    };
+
+    vec3 new_direction = transform_local_to_world(resample_cosine_hemisphere(vec2(rx, ry)), trace.normal);
+
+    float pdf = max(0, dot(trace.normal, new_direction)) / 3.1415926535897;
+    float g_x = max(0, dot(trace.normal, new_direction)) / 3.1415926535897;
+    vec3 reflectance = diff * g_x / dot(new_direction, trace.normal);
+
+    if(force_write_color || pdf < 1e-3 || isnan(pdf) || isinf(pdf) || 
+      any(isnan(reflectance)) || any(isinf(reflectance)) || 
+      any(isnan(new_direction)) || any(isinf(new_direction)))
+    {
+      if(any(isnan(reflectance)) || any(isinf(reflectance)))
+        accumulate_color(gen.color, ivec2(pixel));
+      else
+        accumulate_color(gen.color + vec4(reflectance * gen.reflectance, 0), ivec2(pixel));
+      return;
+    }
+
+    gen.pdf *= pdf;
+    gen.reflectance *= reflectance * abs(dot(new_direction, trace.normal)) / pdf;// * g_x;
+    gen.direction = new_direction;
+    gen.origin = trace.point + 1e-5 * gen.direction;
+    gen.random_value = random_value(int(int(2341335623 * gen.random_value) + 357883444*id));
+    generate_output[id] = gen;
+  }
+  else
+  { 
+    vec3 env;
+    if(textureSize(cubemap, 0).x > 10)
+    {
+      env = gen.reflectance * textureLod(cubemap, gen.direction, 0).rgb;
+    }
+    else
+    {
+      env = gen.reflectance * mix(vec3(0.3, 0.4, 0.5), vec3(1.0, 0.98, 0.96), (gen.direction.y + 1) / 2);
+    }
+    accumulate_color(vec4(env, 1), ivec2(pixel));
+  }
+}

@@ -81,4 +81,45 @@ namespace myrt
     {
         return make_program({ &vertex_shader_code, 1 }, {&fragment_shader_code, 1});
     }
+
+    std::optional<GLuint> make_program(std::span<std::string_view const> compute_shader_codes)
+    {
+      auto const [codes, lengths] = detail::make_string_lengths_lists(compute_shader_codes);
+
+      GLuint cs = glCreateShader(GL_COMPUTE_SHADER);
+      glShaderSource(cs, GLsizei(codes.size()), codes.data(), lengths.data());
+      glCompileShader(cs);
+
+      int ll = 0;
+      glGetShaderiv(cs, GL_INFO_LOG_LENGTH, &ll);
+      std::string info_logx(ll, ' ');
+      glGetShaderInfoLog(cs, ll, &ll, info_logx.data());
+      pretty_print(info_logx);
+
+      GLuint prog = glCreateProgram();
+      glAttachShader(prog, cs);
+      glLinkProgram(prog);
+
+      int log_length = 0;
+      glGetProgramiv(prog, GL_INFO_LOG_LENGTH, &log_length);
+      std::string info_log(log_length, ' ');
+      glGetProgramInfoLog(prog, log_length, &log_length, info_log.data());
+      pretty_print(info_log);
+
+      glDetachShader(prog, cs);
+      glDeleteShader(cs);
+
+      int link_status = 0;
+      glGetProgramiv(prog, GL_LINK_STATUS, &link_status);
+      if (link_status != GL_TRUE)
+      {
+        glDeleteProgram(prog);
+        return std::nullopt;
+      }
+      return prog;
+    }
+    std::optional<GLuint> make_program(std::string_view const compute_shader_code)
+    {
+      return make_program({ &compute_shader_code, 1 });
+    }
 }

@@ -5,6 +5,9 @@
 #include "sfml.hpp"
 #include "gl.hpp"
 #include <stb_image.h>
+#include "material.hpp"
+
+#include "pathtracer/sequential_pathtracer.hpp"
 
 #include "thread_pool.hpp"
 
@@ -106,6 +109,9 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
 
   myrt::scene scene;
   myrt::pathtracer pathtracer;
+
+  myrt::sequential_pathtracer seq_pt;
+
   rnu::cameraf camera(rnu::vec3{ 0.0f, 0.0f, -15.f });
   myrt::async_resource<std::vector<myrt::geometric_object>> objects_resource(loading_pool, [&] { sf::Context context; return load_object_file(scene, "podium.obj"); });
   myrt::async_resource<std::pair<GLuint, GLuint>> cube_resource(loading_pool, [] { sf::Context context; return load_cubemap("christmas_photo"); });
@@ -176,9 +182,14 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
   int march_eps_exp = 6;
   float march_eps_fac = 0.75f;
 
+  bool show_debug = false;
+
   float pg_sphere_radius = 3;
   float pg_smoothness1 = 0.1f;
   rnu::vec2 torus_size(0.3, 1.2);
+
+  GLuint fbo;
+  glCreateFramebuffers(1, &fbo);
 
   for (auto frame : myrt::gl::next_frame(*window)) {
     if (stop_token.stop_requested())
@@ -205,12 +216,36 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
         sf::Mouse::isButtonPressed(sf::Mouse::Left));
     }
 
-    auto view_matrix = camera.matrix(true);
+    auto view_matrix = camera.matrix(false);
     auto proj_matrix = camera.projection(rnu::radians(70), float(window->getSize().x) / float(window->getSize().y), 0.01f, 1000.f, true);
-    pathtracer.set_view(view_matrix);
-    pathtracer.set_projection(proj_matrix);
-    pathtracer.set_focus(focus);
-    pathtracer.sample_to_display(scene, window->getSize().x, window->getSize().y);
+
+    rnu::vec2i size(window->getSize().x, window->getSize().y);
+    seq_pt.set_dof_enabled(true);
+    seq_pt.set_lens_size({ 2, 2 });
+    seq_pt.set_bokeh_mask(bokeh);
+    seq_pt.set_view_matrix(camera.matrix(false));
+    seq_pt.set_projection_matrix(camera.projection(rnu::radians(70), float(window->getSize().x) / float(window->getSize().y), 0.01f, 1000.f, true));
+    seq_pt.set_focus(focus);
+    seq_pt.run(scene, size.x, size.y);
+
+    glNamedFramebufferTexture(fbo, GL_COLOR_ATTACHMENT0, show_debug ? seq_pt.debug_texture_id() : seq_pt.color_texture_id(), 0);
+    glBlitNamedFramebuffer(fbo, 0, 0, 0, size.x, size.y, 0, 0, size.x, size.y, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+    ImGui::Begin("Settings");
+    ImGui::Text("Samples: %d (%.00f sps)", seq_pt.sample_count(), 1.f / frame.delta_time.count());
+    ImGui::Checkbox("show_debug", &show_debug);
+    ImGui::Checkbox("Enable Cubemap", &cubemap_enabled);
+
+    if (cubemap_enabled)
+      cube_resource.current([&](auto const& cur) { seq_pt.set_cubemap(cur.first, cur.second); });
+    else
+      seq_pt.set_cubemap(0, 0);
+    ImGui::End();
+
+    //pathtracer.set_view(view_matrix);
+    //pathtracer.set_projection(proj_matrix);
+    //pathtracer.set_focus(focus);
+    //pathtracer.sample_to_display(scene, window->getSize().x, window->getSize().y);
 
     if (ImGui::Begin("SDF Playground"))
     {
@@ -229,7 +264,7 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
       }
     }
     ImGui::End();
-
+/*
     ImGui::Begin("Settings");
     ImGui::Text("Samples: %d (%.00f sps)", pathtracer.sample_count(), 1.f / frame.delta_time.count());
     if (ImGui::Button("Restart Sampling"))
@@ -286,7 +321,7 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
     else if (ImGui::Button("Reload Shaders"))
       pathtracer.reload_shaders(scene);
 
-    ImGui::End();
+    ImGui::End();*/
 
     if (ImGui::Begin("Materials")) {
 

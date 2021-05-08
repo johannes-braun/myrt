@@ -1,17 +1,94 @@
-#pragma once
+#version 460 core
 
-#include "intersect.h"
-#include "raymarch.h"
+const int group_size = 64;
+layout(local_size_x = group_size) in;
 
-// Forward declare visitor functions.
-bool visit_triangle(MYRT_INDEX_TYPE node_base_index, MYRT_INDEX_TYPE primitive_base_index, vec3 ro, vec3 rd, float maxt);
-bool visit_object_aabb(MYRT_INDEX_TYPE node_base_index, MYRT_INDEX_TYPE primitive_base_index, vec3 ro, vec3 rd, float maxt);
+struct generate_output_t {
+  vec3  origin;
+  float random_value;
+  vec3  direction;
+  float pixel_x;
+  vec3  reflectance;
+  float pixel_y;
+  vec4  color;
+  float pdf;
+  float pad[3];
+};
+
+struct trace_output_t {
+  vec3 point;
+  int intersects;
+  vec3 normal;
+  uint generated_ray;
+
+  vec4  material_uv_x;
+  vec4  material_uv_y;
+  ivec4 material_indices;
+  vec4  material_weights;
+};
+
+struct drawable_geometry_t
+{
+    mat4 transformation;
+    mat4 inverse_transformation;
+    uint bvh_node_base_index;
+    uint bvh_index_base_index;
+    uint indices_base_index;
+    uint points_base_index;
+
+    int material_index;
+    int geometry_index;
+    int pad[2];
+};
+
+struct drawable_sdf_t {
+  mat4 transformation;
+  mat4 inverse_transformation;
+  int sdf_index;
+  int pad[3];
+};
+
+struct hit_t
+{
+    vec3 position;
+    float t;
+    vec3 normal;
+    bool hits;
+    ivec4 material_indices;
+    vec4 material_weights;
+};
+
+#include "intersect.glsl"
+#include "bvh.glsl"
+
+layout(binding = 0, std430) restrict readonly buffer GenerateInput { generate_output_t generate_output[]; };
+layout(binding = 1, std430) restrict writeonly buffer TraceOutput { trace_output_t trace_output[]; };
+layout(binding = 2, std430) restrict buffer AccessControl { 
+  uint num_elements;
+  uint num_groups_x;
+  uint num_groups_y;
+  uint num_groups_z;
+};
+
+layout(binding = 3, std430) restrict readonly buffer SDFDrawables { drawable_sdf_t sdf_drawables[]; };
+layout(binding = 4, std430) restrict readonly buffer SDFData { float sdf_buffer[]; };
+layout(binding = 5, std430) restrict readonly buffer BVH { MYRT_BVH_NODE_STRUCT bvh_nodes[]; };
+layout(binding = 6, std430) restrict readonly buffer BVHIndices { uint bvh_indices[]; };
+layout(binding = 7, std430) restrict readonly buffer MeshIndices { uint indices[]; };
+layout(binding = 8, std430) restrict readonly buffer MeshPoints { vec4 points[]; };
+layout(binding = 9, std430) restrict readonly buffer MeshNormals { vec4 normals[]; };
+layout(binding = 10, std430) restrict readonly buffer Geometries { drawable_geometry_t geometries[]; };
+layout(binding = 11, std430) restrict readonly buffer BVHGlobal { MYRT_BVH_NODE_STRUCT global_bvh_nodes[]; };
+layout(binding = 12, std430) restrict readonly buffer BVHIndicesGlobal { uint global_bvh_indices[]; };
+
+layout(location = 0) uniform int sdf_marching_steps;
+layout(location = 1) uniform float sdf_marching_epsilon;
 
 #define MYRT_BVH_NODES_BUFFER bvh_nodes
 #define MYRT_BVH_INDICES_BUFFER bvh_indices
 #define MYRT_BVH_TRAVERSE bvh_traverse
 #define MYRT_BVH_VISIT_PRIMITIVE visit_triangle
-#include "bvh.impl.h"
+#include "bvh.impl.glsl"
 #undef MYRT_BVH_VISIT_PRIMITIVE
 #undef MYRT_BVH_TRAVERSE
 #undef MYRT_BVH_INDICES_BUFFER
@@ -21,11 +98,62 @@ bool visit_object_aabb(MYRT_INDEX_TYPE node_base_index, MYRT_INDEX_TYPE primitiv
 #define MYRT_BVH_INDICES_BUFFER global_bvh_indices
 #define MYRT_BVH_TRAVERSE bvh_traverse_global
 #define MYRT_BVH_VISIT_PRIMITIVE visit_object_aabb
-#include "bvh.impl.h"
+#include "bvh.impl.glsl"
 #undef MYRT_BVH_VISIT_PRIMITIVE
 #undef MYRT_BVH_TRAVERSE
 #undef MYRT_BVH_INDICES_BUFFER
 #undef MYRT_BVH_NODES_BUFFER
+
+#include "raymarch.glsl"
+
+bool any_hit(vec3 ray_origin, vec3 ray_direction, float max_distance);
+hit_t nearest_hit(vec3 ray_origin, vec3 ray_direction, float max_distance);
+
+void main() {
+  uint id = gl_GlobalInvocationID.x;
+  if(id >= num_elements)
+  {
+    return;
+  }
+  
+  generate_output_t base = generate_output[id];
+  
+  trace_output_t result;
+  result.material_uv_x = vec4(0);
+  result.material_uv_y = vec4(0);
+  result.material_indices = ivec4(0);
+  result.material_weights = vec4(0);
+  result.generated_ray = id;
+  const float tmax = 1.0 / 0.0;
+  float t = tmax;
+
+  hit_t hit = nearest_hit(base.origin, base.direction, 1.0 / 0.0);
+
+  if(hit.hits)
+  {
+    result.intersects = 1;
+    result.point = hit.position;
+    result.normal = hit.normal;
+    result.material_indices = hit.material_indices;
+    result.material_weights = hit.material_weights;
+
+    if(any(isinf(result.normal)) || any(isnan(result.normal)))
+    {
+      result.intersects = 0;
+    }
+
+    result.generated_ray = id;
+  }
+  else
+  {
+    result.intersects = 0;
+    result.point = vec3(0);
+    result.normal = vec3(0);
+  }
+
+  trace_output[id] = result;
+}
+
 
 struct traversal_state_t
 {
@@ -116,10 +244,10 @@ bool any_hit(vec3 ray_origin, vec3 ray_direction, float max_distance)
 
     if (!hits)
     {
-      for (int i = 0; i < sdfs.length(); ++i)
+      for (int i = DONT_OPTIMIZE_ZERO; i < sdf_drawables.length(); ++i)
       {
         sdf_current = i;
-        if (march_sdf(ray_origin, ray_direction, max_distance, true).hits)
+        if (march_sdf(ray_origin, ray_direction, max_distance, true, sdf_marching_steps, sdf_marching_epsilon).hits)
           return true;
       }
     }
@@ -138,10 +266,10 @@ hit_t nearest_hit(vec3 ray_origin, vec3 ray_direction, float max_distance)
     hit.t = traversal.global_t;
 
     bool hit_marched = false;
-    for (int i = 0; i < sdfs.length(); ++i)
+    for (int i = DONT_OPTIMIZE_ZERO; i < sdf_drawables.length(); ++i)
     {
       sdf_current = i;
-      hit_t h = march_sdf(ray_origin, ray_direction, hit.hits ? hit.t : max_distance, false);
+      hit_t h = march_sdf(ray_origin, ray_direction, hit.hits ? hit.t : max_distance, false, sdf_marching_steps, sdf_marching_epsilon);
       if (h.hits && h.t < hit.t) {
         hit = h;
         hit_marched = true;
@@ -176,33 +304,8 @@ hit_t nearest_hit(vec3 ray_origin, vec3 ray_direction, float max_distance)
     }
     hit.normal = normal;
 
-    hit.material = materials[geometries[hit_geometry].material_index];
+    hit.material_indices[0] = geometries[hit_geometry].material_index;
+    hit.material_weights[0] = 1.0;
 
     return hit;
-}
-
-vec3 sample_cosine_hemisphere(vec2 uv)
-{
-    // (Uniformly) sample a point on the unit disk
-    float r = sqrt(uv.x);
-    float theta = 2 * 3.14159265359f * uv.y;
-    float x = r * cos(theta);
-    float y = r * sin(theta);
-
-    // Project point up to the unit sphere
-    float z = float(sqrt(max(0.f, 1 - x * x - y * y)));
-    return vec3(x, y, z);
-}
-vec3 bsdf_local_to_world(const in vec3 vector, const in vec3 normal)
-{
-    // Find an axis that is not parallel to normal
-    vec3 perp = vec3(1, 0, 0);
-    vec3 u = normalize(cross(normal, perp));
-    for (int i = 1; any(isnan(u)) && i < 3; ++i)
-    {
-        perp[i - 1] = 0;
-        perp[i] = 1;
-        u = normalize(cross(normal, perp));
-    }
-    return normalize(mat3(u, cross(normal, u), normal) * vector);
 }
