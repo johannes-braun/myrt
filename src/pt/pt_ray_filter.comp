@@ -9,10 +9,14 @@ struct trace_output_t {
   vec3 normal;
   uint generated_ray;
 
-  vec4  material_uv_x;
-  vec4  material_uv_y;
-  ivec4 material_indices;
-  vec4  material_weights;
+  vec2 uv;
+  int material_index;
+  int _p0;
+  
+  vec3 light_direction;
+  int _p1;
+  vec3 light_contribution;
+  int _p2;
 };
 
 struct generate_output_t {

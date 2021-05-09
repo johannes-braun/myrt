@@ -167,10 +167,10 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
   }
 
   abstract_art_sdf.name = "Abstract Art";
-  abstract_art_sdf.sdf = scene.push_sdf(myrt::sdf_info_t{ .root = root.get_pointer() });
+  abstract_art_sdf.sdf = scene.push_sdf(myrt::sdf_info_t{ .root = unite.get_pointer() });
   abstract_art_sdf.set(capsule.get_parameter(capsule.material), 1);
   abstract_art_sdf.set(sphere.get_parameter(sphere.material), 2);
-  scene.set_material_parameter(abstract_art_sdf.sdf, sphere2[sphere2.material], texmat);
+  //scene.set_material_parameter(abstract_art_sdf.sdf, sphere2[sphere2.material], texmat);
 
   bool cubemap_enabled = false;
   bool bokeh_enabled = false;
@@ -221,8 +221,8 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
 
     rnu::vec2i size(window->getSize().x, window->getSize().y);
     seq_pt.set_dof_enabled(true);
-    seq_pt.set_lens_size({ 2, 2 });
-    seq_pt.set_bokeh_mask(bokeh);
+    seq_pt.set_lens_size({ 0.2, 0.2 });
+    //seq_pt.set_bokeh_mask(bokeh);
     seq_pt.set_view_matrix(camera.matrix(false));
     seq_pt.set_projection_matrix(camera.projection(rnu::radians(70), float(window->getSize().x) / float(window->getSize().y), 0.01f, 1000.f, true));
     seq_pt.set_focus(focus);

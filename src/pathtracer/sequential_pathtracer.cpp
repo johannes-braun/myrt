@@ -72,7 +72,7 @@ namespace myrt {
 
     pass_generate();
 
-    for (int i = 0; i < 5; ++i)
+    for (int i = 0; i < 8; ++i)
     {
       pass_trace(scene);
       pass_color(false);
@@ -80,7 +80,6 @@ namespace myrt {
     }
     pass_trace(scene);
     pass_color(true);
-    pass_filter();
 
     m_sample_counter++;
   }
@@ -268,6 +267,8 @@ namespace myrt {
   }
   void sequential_pathtracer::pass_trace(scene& scene)
   {
+    std::uniform_int_distribution<> dist;
+
     if (&scene != m_last_scene)
     {
       glDeleteProgram(m_trace_shader);
@@ -290,6 +291,14 @@ namespace myrt {
       create_trace_shader(scene);
 
     glUseProgram(m_trace_shader);
+
+    glUniform1i(m_trace_bindings.random_sample, dist(m_rng));
+
+    std::uniform_real_distribution<float> distribution(0.f, 1.f);
+    std::generate(m_random_texture_data.begin(), m_random_texture_data.end(), [&] {return distribution(m_rng); });
+    glTextureSubImage1D(m_random_texture->id(), 0, 0, GLsizei(m_random_texture_data.size()), GL_RED, GL_FLOAT, m_random_texture_data.data());
+    glBindTextureUnit(m_trace_bindings.random_texture, m_random_texture->id());
+
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_trace_bindings.access_control, m_filter_control_buffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_trace_bindings.input_buffer, m_generate_buffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_trace_bindings.output_buffer, m_trace_buffer);
@@ -306,7 +315,7 @@ namespace myrt {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_trace_bindings.sdf_drawables, scene.get_scene_buffers().sdf_drawable_buffer);
 
     glUniform1i(m_trace_bindings.sdf_marching_steps, 400);
-    glUniform1f(m_trace_bindings.sdf_marching_epsilon, 2e-6);
+    glUniform1f(m_trace_bindings.sdf_marching_epsilon, 0.75e-6f);
 
     glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, m_filter_control_buffer);
     glDispatchComputeIndirect(offsetof(filter_access_t, num_groups_x));
@@ -360,6 +369,9 @@ namespace myrt {
 
     m_trace_bindings.sdf_marching_steps = if_empty(uniform_location(m_trace_shader, "sdf_marching_steps"));
     m_trace_bindings.sdf_marching_epsilon = if_empty(uniform_location(m_trace_shader, "sdf_marching_epsilon"));
+
+    m_trace_bindings.random_texture = if_empty(sampler_binding(m_trace_shader, "random_texture"));
+    m_trace_bindings.random_sample = if_empty(uniform_location(m_trace_shader, "random_sample"));
 
     GLint group_sizes[3]{};
     glGetProgramiv(m_trace_shader, GL_COMPUTE_WORK_GROUP_SIZE, group_sizes);
@@ -446,9 +458,6 @@ namespace myrt {
 
     glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, m_filter_control_buffer);
     glDispatchComputeIndirect(offsetof(filter_access_t, num_groups_x));
-    //auto const count_x = ((m_image_size.x * m_image_size.y) + m_color_group_size - 1) / m_color_group_size;
-    //glDispatchCompute(count_x, 1, 1);
-
   }
   void sequential_pathtracer::create_color_shader()
   {

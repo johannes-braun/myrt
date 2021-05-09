@@ -20,7 +20,7 @@ bokeh_t bokeh_get(sampler2D mask)
   bokeh.value = vec3(1, 1, 1);
   bokeh.amount = 1;
 
-  if (textureSize(mask, 0).x == 0)
+  if (textureSize(mask, 0).x < 10)
     return bokeh;
 
   while ((bokeh_tries == 8 || bokeh.amount < 1e-5) && bokeh_tries-- > 0)

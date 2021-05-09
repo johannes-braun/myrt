@@ -21,10 +21,14 @@ struct trace_output_t {
   vec3 normal;
   uint generated_ray;
 
-  vec4  material_uv_x;
-  vec4  material_uv_y;
-  ivec4 material_indices;
-  vec4  material_weights;
+  vec2 uv;
+  int material_index;
+  int _p0;
+  
+  vec3 light_direction;
+  int _p1;
+  vec3 light_contribution;
+  int _p2;
 };
 
 struct drawable_geometry_t
@@ -50,12 +54,12 @@ struct drawable_sdf_t {
 
 struct hit_t
 {
-    vec3 position;
-    float t;
-    vec3 normal;
-    bool hits;
-    ivec4 material_indices;
-    vec4 material_weights;
+  vec3 position;
+  float t;
+  vec3 normal;
+  vec2 uv;
+  bool hits;
+  int material_index;
 };
 
 #include "intersect.glsl"
@@ -81,8 +85,11 @@ layout(binding = 10, std430) restrict readonly buffer Geometries { drawable_geom
 layout(binding = 11, std430) restrict readonly buffer BVHGlobal { MYRT_BVH_NODE_STRUCT global_bvh_nodes[]; };
 layout(binding = 12, std430) restrict readonly buffer BVHIndicesGlobal { uint global_bvh_indices[]; };
 
+layout(binding = 0) uniform sampler1D random_texture;
+
 layout(location = 0) uniform int sdf_marching_steps;
 layout(location = 1) uniform float sdf_marching_epsilon;
+layout(location = 2) uniform int random_sample;
 
 #define MYRT_BVH_NODES_BUFFER bvh_nodes
 #define MYRT_BVH_INDICES_BUFFER bvh_indices
@@ -109,37 +116,68 @@ layout(location = 1) uniform float sdf_marching_epsilon;
 bool any_hit(vec3 ray_origin, vec3 ray_direction, float max_distance);
 hit_t nearest_hit(vec3 ray_origin, vec3 ray_direction, float max_distance);
 
+struct light_t
+{
+  vec3 position;
+  float radius;
+  vec3 color;
+  vec2 attenuation;
+} test_lights[2];
+
 void main() {
   uint id = gl_GlobalInvocationID.x;
   if(id >= num_elements)
   {
     return;
   }
-  
+
+  test_lights[0].position = vec3(4, 5, 4);
+  test_lights[0].color = 25*vec3(1, 1.8, 3);
+  test_lights[0].radius = 0.2f;
+  test_lights[1].position = vec3(-4, 3, 5);
+  test_lights[1].color = 12*vec3(3, 1.8, 1);
+  test_lights[1].radius = 0.1f;
+
   generate_output_t base = generate_output[id];
   
+  random_init(random_texture, ivec2(base.pixel_x, base.pixel_y), random_sample);
+  
   trace_output_t result;
-  result.material_uv_x = vec4(0);
-  result.material_uv_y = vec4(0);
-  result.material_indices = ivec4(0);
-  result.material_weights = vec4(0);
+  result.uv = vec2(0);
+  result.material_index = 0;
   result.generated_ray = id;
   const float tmax = 1.0 / 0.0;
   float t = tmax;
 
   hit_t hit = nearest_hit(base.origin, base.direction, 1.0 / 0.0);
-
+  
+  result.light_direction = vec3(0);
+  result.light_contribution = vec3(0);
   if(hit.hits)
   {
     result.intersects = 1;
     result.point = hit.position;
     result.normal = hit.normal;
-    result.material_indices = hit.material_indices;
-    result.material_weights = hit.material_weights;
+    result.uv = hit.uv;
+    result.material_index = hit.material_index;
 
     if(any(isinf(result.normal)) || any(isnan(result.normal)))
     {
       result.intersects = 0;
+    }
+    
+    int light_index = clamp(int(test_lights.length() * random_next()), 0, test_lights.length()-1);
+    vec3 point_on_light = test_lights[light_index].position + normalize(vec3(random_next(), random_next(), random_next())) * test_lights[light_index].radius * sqrt(random_next());
+    
+    vec3 path_to_light = point_on_light - hit.position;
+    vec3 direction_to_light = normalize(path_to_light);
+    float distance_to_light = length(path_to_light);
+
+    if(!any_hit(hit.position + direction_to_light * 1.5e-5f, direction_to_light, length(path_to_light)))
+    {
+      result.light_direction = direction_to_light;
+      vec3 ref = test_lights[light_index].color * abs(dot(direction_to_light, hit.normal));
+      result.light_contribution = ref * test_lights.length() / (distance_to_light);
     }
 
     result.generated_ray = id;
@@ -304,8 +342,9 @@ hit_t nearest_hit(vec3 ray_origin, vec3 ray_direction, float max_distance)
     }
     hit.normal = normal;
 
-    hit.material_indices[0] = geometries[hit_geometry].material_index;
-    hit.material_weights[0] = 1.0;
+    hit.material_index = geometries[hit_geometry].material_index;
+
+    hit.uv = vec2(0); // todo
 
     return hit;
 }

@@ -1,10 +1,10 @@
 #pragma once
+#include "random.glsl"
 
 #define DONT_OPTIMIZE_ZERO min(sdf_marching_steps, 0)
 struct mt_indices_t
 {
-  ivec4 indices;
-  vec4 weights;
+  int index;
 };
 
 #define _MT mt_indices_t
@@ -35,8 +35,7 @@ _MT _ldm(int index) {
   _MT mat;
   
   if (g_do_load_materials) {
-    mat.indices[0] = index;
-    mat.weights[0] = 1;
+    mat.index = index;
   }
 
   return mat;
@@ -46,8 +45,12 @@ _MT _mxm(_MT a, _MT b, float t)
   _MT o;
   if (g_do_load_materials)
   {
-    // TODO change...
-    o = a;
+    t = random_next() < t ? 0.0 : 1.0;
+
+    if (t == 1.0)
+      o = a;
+    else if (t == 0.0)
+      o = b;
   }
   return o;
 }
@@ -149,7 +152,6 @@ hit_t march_sdf(vec3 ro, vec3 rd, float tmax, bool hits_only, int steps, float e
   hit.position = ro + t * rd;
   _MT current_mat;
   hit.normal = nor(hit.position, current_mat);
-  hit.material_indices = current_mat.indices;
-  hit.material_weights = current_mat.weights;
+  hit.material_index = current_mat.index;
   return hit;
 }

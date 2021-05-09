@@ -43,15 +43,19 @@ namespace myrt {
 
     struct trace_output_t {
       rnu::vec3 point;
-      int intersects;
+      std::int32_t intersects;
       rnu::vec3 normal;
       std::uint32_t generated_ray;
 
-      // sample({uvx[0], uvy[0]}, materials[material_indices[0]]]) * material_weights[0] + ...
-      rnu::vec4 material_uv_x;
-      rnu::vec4 material_uv_y;
-      rnu::vec4i material_indices;
-      rnu::vec4 material_weights;
+      rnu::vec2 uv;
+      std::int32_t material_index;
+
+      std::int32_t _p0;
+
+      rnu::vec3 light_direction;
+      std::int32_t _p1;
+      rnu::vec3 light_contribution;
+      std::int32_t _p2;
     };
 
     struct filter_access_t {
@@ -59,10 +63,6 @@ namespace myrt {
       std::uint32_t num_groups_x;
       std::uint32_t num_groups_y;
       std::uint32_t num_groups_z;
-    };
-
-    struct resample_output_t : generate_output_t {
-
     };
 
     void create_generate_shader();
@@ -159,6 +159,9 @@ namespace myrt {
       GLint sdf_drawables;
       GLint sdf_marching_steps;
       GLint sdf_marching_epsilon;
+
+      GLint random_sample;
+      GLint random_texture;
     } m_trace_bindings;
 
     struct {

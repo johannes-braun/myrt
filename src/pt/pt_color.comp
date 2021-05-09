@@ -5,6 +5,7 @@ layout(local_size_x = 64) in;
 #include "resample.glsl"
 #include "transform.glsl"
 #include "random.glsl"
+#include "pbr.glsl"
 
 struct generate_output_t {
   vec3  origin;
@@ -24,10 +25,14 @@ struct trace_output_t {
   vec3 normal;
   uint generated_ray;
 
-  vec4  material_uv_x;
-  vec4  material_uv_y;
-  ivec4 material_indices;
-  vec4  material_weights;
+  vec2 uv;
+  int material_index;
+  int _p0;
+  
+  vec3 light_direction;
+  int _p1;
+  vec3 light_contribution;
+  int _p2;
 };
 
 layout(binding = 2, std430) readonly buffer AccessControl { 
@@ -82,12 +87,85 @@ void accumulate_color(vec4 new_color, ivec2 pixel)
   imageStore(output_image, pixel, last_color);
 }
 
+struct material_sample_t
+{
+  vec4 color;
+  vec3 reflectance;
+  float pdf;
+};
+
+void mix_onto(inout material_sample_t dst, material_sample_t other, float weight)
+{
+  dst.color = mix(dst.color, other.color, weight);
+  dst.reflectance = mix(dst.reflectance, other.reflectance, weight);
+  dst.pdf = mix(dst.pdf, other.pdf, weight);
+}
+
+material_info_t get_test_material(int index) {
+  float met = 0.0;
+  float tm = 0.0;
+  vec3 diff = vec3(1);
+  switch(index)
+  {
+    case 0: diff = vec3(1, 0, 0.3); met = 1; break;
+    case 1: diff = vec3(0, 1, 0.3); tm = 1.0; break;
+    case 2: diff = vec3(0.4, 0.1, 0.5); break;
+    case 3: diff = vec3(0.3, 0.4,0.0); tm = 1.0; break;
+    case 4: diff = vec3(1,1, 1.0); met = 1; break;
+  };
+
+  material_info_t m;
+  m.roughness = 0.2;
+  m.albedo_rgba_unorm = color_make(vec4(diff, 1));
+  m.ior = 1.5;
+  m.metallic = met;
+  m.transmission = tm;
+  return m;
+}
+
+vec3 material_continue_ray(trace_output_t trace, vec2 random, vec3 towards_viewer, vec3 normal, float ior1, float ior2)
+{
+  return pbr_resample(random, get_test_material(trace.material_index), towards_viewer, normal, ior1, ior2);
+}
+
+material_sample_t sample_material_proto(int index, vec2 uv, vec3 normal, vec3 point, vec3 towards_light, vec3 towards_viewer, float ior1, float ior2)
+{
+  brdf_result_t ev;
+  pbr_eval(get_test_material(index), towards_viewer, towards_light, normal, ior1, ior2, ev);
+    
+  material_sample_t mat;
+  mat.reflectance = ev.reflectance;
+  mat.pdf = ev.pdf;
+  return mat;
+}
+
+struct light_t
+{
+    vec3 position;
+    float radius;
+    vec3 color;
+    vec2 attenuation;
+} test_lights[2];
+
+void material_sample(trace_output_t trace, vec3 towards_light, vec3 towards_viewer, float ior1, float ior2, out material_sample_t material)
+{
+  material = sample_material_proto(trace.material_index, trace.uv,
+    trace.normal, trace.point, towards_light, towards_viewer, ior1, ior2);
+}
+
 void main() {
   uint id = gl_GlobalInvocationID.x;
   if(id >= num_elements)
   {
     return;
   }
+
+  test_lights[0].position = vec3(4, 5, 4);
+  test_lights[0].color = 25*vec3(1, 1.8, 3);
+  test_lights[0].radius = 0.2f;
+  test_lights[1].position = vec3(-4, 3, 5);
+  test_lights[1].color = 12*vec3(3, 1.8, 1);
+  test_lights[1].radius = 0.1f;
 
   trace_output_t trace = trace_output[id];
   generate_output_t gen = generate_output[id];
@@ -98,36 +176,40 @@ void main() {
     random_init(random_texture, pixel, random_sample);
     float rx = random_value(int(int(56128966 * gen.random_value) + 20945293*id));
     float ry = random_value(int(int(12233432 * gen.random_value) + 74867839*id));
+    
+    bool is_incoming = dot(trace.normal, gen.direction) < 0;
+    trace.normal = is_incoming ? trace.normal : -trace.normal;
+    float ior_front = is_incoming ? 1.0 : 1.5;
+    float ior_back = is_incoming ? 1.5 : 1.0;
 
-    vec3 diff = vec3(1);
-    switch(trace.material_indices[0])
+    vec2 material_randoms = vec2(random_next(), random_next());
+    vec3 generated = material_continue_ray(trace, material_randoms, -gen.direction, trace.normal, ior_front, ior_back);
+
+    material_sample_t material;
+    material_sample(trace, generated, -gen.direction, ior_front, ior_back, material);
+
+    if(force_write_color || material.pdf < 1e-3 || isnan(material.pdf) || isinf(material.pdf) || 
+      any(isnan(material.reflectance)) || any(isinf(material.reflectance)) || 
+      any(isnan(generated)) || any(isinf(generated)))
     {
-      case 0: diff = vec3(1, 0, 0.3); break;
-      case 1: diff = vec3(0, 1, 0.3); break;
-      case 2: diff = vec3(0.3, 0.1, 1.0); break;
-    };
-
-    vec3 new_direction = transform_local_to_world(resample_cosine_hemisphere(vec2(rx, ry)), trace.normal);
-
-    float pdf = max(0, dot(trace.normal, new_direction)) / 3.1415926535897;
-    float g_x = max(0, dot(trace.normal, new_direction)) / 3.1415926535897;
-    vec3 reflectance = diff * g_x / dot(new_direction, trace.normal);
-
-    if(force_write_color || pdf < 1e-3 || isnan(pdf) || isinf(pdf) || 
-      any(isnan(reflectance)) || any(isinf(reflectance)) || 
-      any(isnan(new_direction)) || any(isinf(new_direction)))
-    {
-      if(any(isnan(reflectance)) || any(isinf(reflectance)))
+      if(any(isnan(material.reflectance)) || any(isinf(material.reflectance)))
         accumulate_color(gen.color, ivec2(pixel));
       else
-        accumulate_color(gen.color + vec4(reflectance * gen.reflectance, 0), ivec2(pixel));
+        accumulate_color(gen.color + vec4(material.reflectance * gen.reflectance, 0), ivec2(pixel));
       return;
     }
 
-    gen.pdf *= pdf;
-    gen.reflectance *= reflectance * abs(dot(new_direction, trace.normal)) / pdf;// * g_x;
-    gen.direction = new_direction;
-    gen.origin = trace.point + 1e-5 * gen.direction;
+    if(trace.light_contribution != vec3(0))
+    {
+      material_sample_t light_material;
+      material_sample(trace, trace.light_direction, -gen.direction, ior_front, ior_back, light_material);
+      gen.color += vec4(trace.light_contribution * light_material.reflectance, 0);
+    }
+
+    gen.pdf *= material.pdf;
+    gen.reflectance *= material.reflectance * abs(dot(generated, trace.normal)) / material.pdf;
+    gen.direction = generated;
+    gen.origin = trace.point + 1e-3 * gen.direction;
     gen.random_value = random_value(int(int(2341335623 * gen.random_value) + 357883444*id));
     generate_output[id] = gen;
   }
@@ -142,6 +224,6 @@ void main() {
     {
       env = gen.reflectance * mix(vec3(0.3, 0.4, 0.5), vec3(1.0, 0.98, 0.96), (gen.direction.y + 1) / 2);
     }
-    accumulate_color(vec4(env, 1), ivec2(pixel));
+    accumulate_color(gen.color + vec4(env, 0), ivec2(pixel));
   }
 }
