@@ -123,6 +123,18 @@ namespace myrt
 	[[nodiscard]] std::vector<aabb_t> generate_triangle_bounds(std::span<detail::default_index_type const> indices, std::function<detail::default_point_type(detail::default_index_type)> const& get_point);
 	[[nodiscard]] std::vector<aabb_t> generate_triangle_bounds(std::span<detail::default_index_type const> indices, std::span<detail::default_point_type const> points);
 
+	struct primitive_split_request_t
+	{
+		detail::default_index_type index;
+		aabb_t aabb;
+	};
+
+	struct primitive_split_result_t
+	{
+		aabb_t first;
+		aabb_t second;
+	};
+
 	class bvh
 	{
 	public:
@@ -144,5 +156,7 @@ namespace myrt
 
 		std::vector<aligned_node_t> m_nodes;
 		std::vector<index_type> m_reordered_indices;
+
+		std::function<std::optional<primitive_split_result_t>(primitive_split_request_t request)> m_split_primitive;
 	};
 }

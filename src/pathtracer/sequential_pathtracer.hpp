@@ -50,12 +50,9 @@ namespace myrt {
       rnu::vec2 uv;
       std::int32_t material_index;
 
-      std::int32_t _p0;
-
+      rnu::vec4ui8 light_color;
       rnu::vec3 light_direction;
-      std::int32_t _p1;
-      rnu::vec3 light_contribution;
-      std::int32_t _p2;
+      float light_strength;
     };
 
     struct filter_access_t {
@@ -81,11 +78,16 @@ namespace myrt {
     void create_color_shader();
     void load_color_bindings();
 
-    GLuint m_generate_shader;
-    GLuint m_trace_shader;
-    GLuint m_resample_shader;
-    GLuint m_ray_filter_shader;
-    GLuint m_color_shader;
+    GLuint m_generate_shader = 0;
+    GLuint m_trace_shader = 0;
+    GLuint m_resample_shader = 0;
+    GLuint m_ray_filter_shader = 0;
+    GLuint m_color_shader = 0;
+    GLuint m_generate_buffer = 0;
+    GLuint m_trace_buffer = 0;
+    GLuint m_filter_buffer = 0;
+    GLuint m_filter_control_buffer = 0;
+    GLuint m_filter_control_buffer_target = 0;
 
     texture_provider_t m_texture_provider;
 
@@ -99,22 +101,14 @@ namespace myrt {
     std::shared_ptr<texture_t> m_random_texture;
     rnu::vec2 m_lens_size = { 10, 10 };
     float m_focus = 10.0f;
-    GLuint m_bokeh_texture = 0;
-    GLuint m_generate_buffer = 0;
-    GLuint m_trace_buffer = 0;
-    GLuint m_filter_buffer = 0;
-    GLuint m_filter_control_buffer = 0;
-    GLuint m_filter_control_buffer_target = 0;
 
+    GLuint m_bokeh_texture = 0;
     GLuint m_cubemap = 0;
     GLuint m_cubemap_sampler = 0;
 
     std::uint32_t m_sample_counter = 0;
 
     rnu::vec2i m_generate_group_sizes;
-    int m_trace_group_size;
-    int m_ray_filter_group_size;
-    int m_color_group_size;
 
     std::mt19937 m_rng;
 

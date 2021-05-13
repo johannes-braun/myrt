@@ -1,3 +1,7 @@
+#ifndef UINT_TYPE
+#define UINT_TYPE uint
+#endif
+
 bool MYRT_BVH_VISIT_PRIMITIVE(vec3 origin, vec3 direction,
     MYRT_INDEX_TYPE index,
     inout float max_ray_distance, out bool hits);
@@ -7,8 +11,8 @@ bool MYRT_BVH_TRAVERSE(MYRT_INDEX_TYPE node_base_index,
 {
     bool hits_primitive = false;
     vec3 inv_rd = 1.0 / rd;
-    uint visited_stack = 0;
-    uint left_right_stack = 0;
+    UINT_TYPE visited_stack = 0;
+    UINT_TYPE left_right_stack = 0;
     MYRT_INDEX_TYPE node_index = node_base_index;
     float tmp = 1.0 / 0.0;
     bool hits_any = bvh_ray_aabb_intersect(MYRT_BVH_NODES_BUFFER[node_base_index].min_extents,
@@ -28,8 +32,8 @@ bool MYRT_BVH_TRAVERSE(MYRT_INDEX_TYPE node_base_index,
                 ro, inv_rd, maxt, t_right);
             if (!hits_left && !hits_right)
                 break;
-            left_right_stack = uint(t_left > t_right) | (left_right_stack << 1);
-            visited_stack = uint(hits_left && hits_right) | (visited_stack << 1);
+            left_right_stack = UINT_TYPE(t_left > t_right) | (left_right_stack << UINT_TYPE(1));
+            visited_stack = UINT_TYPE(hits_left && hits_right) | (visited_stack << UINT_TYPE(1));
             bool use_right = (!hits_left || (hits_right && ((left_right_stack & 0x1) == 0x1)));
             node_index = (use_right ? current.second_child : current.first_child) + node_base_index;
             current = MYRT_BVH_NODES_BUFFER[node_index];
@@ -46,17 +50,17 @@ bool MYRT_BVH_TRAVERSE(MYRT_INDEX_TYPE node_base_index,
                     hits_primitive = true;
             }
         }
-        while ((visited_stack & 1) != 1) {
+        while ((visited_stack & UINT_TYPE(1)) != 1) {
             if (visited_stack == 0)
                 return hits_primitive;
             node_index = bvh_node_parent(MYRT_BVH_NODES_BUFFER[node_index]) + node_base_index;
-            visited_stack >>= 1;
-            left_right_stack >>= 1;
+            visited_stack >>= UINT_TYPE(1);
+            left_right_stack >>= UINT_TYPE(1);
         }
         node_index = node_base_index + (((left_right_stack & 0x1) == 0x1)
             ? MYRT_BVH_NODES_BUFFER[bvh_node_parent(MYRT_BVH_NODES_BUFFER[node_index]) + node_base_index].first_child
             : MYRT_BVH_NODES_BUFFER[bvh_node_parent(MYRT_BVH_NODES_BUFFER[node_index]) + node_base_index].second_child);
-        visited_stack ^= 1;
+        visited_stack ^= UINT_TYPE(1);
     }
     return false;
 }

@@ -2,5 +2,6 @@
 #include <filesystem>
 
 namespace myrt {
-  const static std::filesystem::path resources_dir = "../../../res";
+  const inline static std::filesystem::path resources_dir = 
+    std::filesystem::exists("./res") ? "./res" : "../../../res";
 }

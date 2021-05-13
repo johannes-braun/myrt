@@ -27,12 +27,10 @@ struct trace_output_t {
 
   vec2 uv;
   int material_index;
-  int _p0;
   
+  uint light_color;
   vec3 light_direction;
-  int _p1;
-  vec3 light_contribution;
-  int _p2;
+  float light_strength;
 };
 
 layout(binding = 2, std430) readonly buffer AccessControl { 
@@ -94,13 +92,6 @@ struct material_sample_t
   float pdf;
 };
 
-void mix_onto(inout material_sample_t dst, material_sample_t other, float weight)
-{
-  dst.color = mix(dst.color, other.color, weight);
-  dst.reflectance = mix(dst.reflectance, other.reflectance, weight);
-  dst.pdf = mix(dst.pdf, other.pdf, weight);
-}
-
 material_info_t get_test_material(int index) {
   float met = 0.0;
   float tm = 0.0;
@@ -139,14 +130,6 @@ material_sample_t sample_material_proto(int index, vec2 uv, vec3 normal, vec3 po
   return mat;
 }
 
-struct light_t
-{
-    vec3 position;
-    float radius;
-    vec3 color;
-    vec2 attenuation;
-} test_lights[2];
-
 void material_sample(trace_output_t trace, vec3 towards_light, vec3 towards_viewer, float ior1, float ior2, out material_sample_t material)
 {
   material = sample_material_proto(trace.material_index, trace.uv,
@@ -160,13 +143,6 @@ void main() {
     return;
   }
 
-  test_lights[0].position = vec3(4, 5, 4);
-  test_lights[0].color = 25*vec3(1, 1.8, 3);
-  test_lights[0].radius = 0.2f;
-  test_lights[1].position = vec3(-4, 3, 5);
-  test_lights[1].color = 12*vec3(3, 1.8, 1);
-  test_lights[1].radius = 0.1f;
-
   trace_output_t trace = trace_output[id];
   generate_output_t gen = generate_output[id];
   
@@ -179,6 +155,7 @@ void main() {
     
     bool is_incoming = dot(trace.normal, gen.direction) < 0;
     trace.normal = is_incoming ? trace.normal : -trace.normal;
+
     float ior_front = is_incoming ? 1.0 : 1.5;
     float ior_back = is_incoming ? 1.5 : 1.0;
 
@@ -199,11 +176,11 @@ void main() {
       return;
     }
 
-    if(trace.light_contribution != vec3(0))
+    if(trace.light_strength > 0)
     {
       material_sample_t light_material;
       material_sample(trace, trace.light_direction, -gen.direction, ior_front, ior_back, light_material);
-      gen.color += vec4(trace.light_contribution * light_material.reflectance, 0);
+      gen.color += vec4(unpackUnorm4x8(trace.light_color).rgb * trace.light_strength * light_material.reflectance, 0);
     }
 
     gen.pdf *= material.pdf;

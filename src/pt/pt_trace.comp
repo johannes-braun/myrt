@@ -1,5 +1,7 @@
 #version 460 core
 
+#extension GL_ARB_gpu_shader_int64: require
+
 const int group_size = 64;
 layout(local_size_x = group_size) in;
 
@@ -23,12 +25,10 @@ struct trace_output_t {
 
   vec2 uv;
   int material_index;
-  int _p0;
   
+  uint light_color;
   vec3 light_direction;
-  int _p1;
-  vec3 light_contribution;
-  int _p2;
+  float light_strength;
 };
 
 struct drawable_geometry_t
@@ -124,6 +124,10 @@ struct light_t
   vec2 attenuation;
 } test_lights[2];
 
+vec3 light_normal;
+int light_index = 0;
+vec3 point_on_light;
+
 void main() {
   uint id = gl_GlobalInvocationID.x;
   if(id >= num_elements)
@@ -148,11 +152,15 @@ void main() {
   result.generated_ray = id;
   const float tmax = 1.0 / 0.0;
   float t = tmax;
-
+  
+  light_index = clamp(int(test_lights.length() * random_next()), 0, test_lights.length()-1);
+  point_on_light = test_lights[light_index].position + normalize(vec3(random_next(), random_next(), random_next())) * test_lights[light_index].radius * sqrt(random_next());
+    
   hit_t hit = nearest_hit(base.origin, base.direction, 1.0 / 0.0);
   
   result.light_direction = vec3(0);
-  result.light_contribution = vec3(0);
+  result.light_color = 0;
+  result.light_strength = 0;
   if(hit.hits)
   {
     result.intersects = 1;
@@ -165,19 +173,17 @@ void main() {
     {
       result.intersects = 0;
     }
-    
-    int light_index = clamp(int(test_lights.length() * random_next()), 0, test_lights.length()-1);
-    vec3 point_on_light = test_lights[light_index].position + normalize(vec3(random_next(), random_next(), random_next())) * test_lights[light_index].radius * sqrt(random_next());
-    
     vec3 path_to_light = point_on_light - hit.position;
     vec3 direction_to_light = normalize(path_to_light);
     float distance_to_light = length(path_to_light);
 
-    if(!any_hit(hit.position + direction_to_light * 1.5e-5f, direction_to_light, length(path_to_light)))
+    if(!any_hit(hit.position + light_normal * 0.01, direction_to_light, length(path_to_light)))
     {
       result.light_direction = direction_to_light;
-      vec3 ref = test_lights[light_index].color * abs(dot(direction_to_light, hit.normal));
-      result.light_contribution = ref * test_lights.length() / (distance_to_light);
+      vec3 ref = test_lights[light_index].color * max(0, dot(direction_to_light, light_normal));
+      vec3 color = ref * test_lights.length() / (distance_to_light);
+      result.light_strength = length(color);
+      result.light_color = packUnorm4x8(vec4(color, 0) / result.light_strength);
     }
 
     result.generated_ray = id;
@@ -331,15 +337,16 @@ hit_t nearest_hit(vec3 ray_origin, vec3 ray_direction, float max_distance)
     vec3 n0 = normals[base_vertex + indices[base_index + 3 * hit_triangle + 0]].xyz;
     vec3 n1 = normals[base_vertex + indices[base_index + 3 * hit_triangle + 1]].xyz;
     vec3 n2 = normals[base_vertex + indices[base_index + 3 * hit_triangle + 2]].xyz;
-    mat4 normal_matrix = mat4(mat3(transpose(geometries[hit_geometry].inverse_transformation)));
-    vec3 normal = normalize((normal_matrix
-        * vec4((hit_bary.x * n1 + hit_bary.y * n2 + (1.0 - hit_bary.x - hit_bary.y) * n0), 0)).xyz);
-
-    vec3 face_normal = (normal_matrix * vec4(normalize(cross(normalize(p1 - p0), normalize(p2 - p0))), 0)).xyz;
+    mat3 normal_matrix = mat3(transpose(geometries[hit_geometry].inverse_transformation));
+    vec3 normal = normalize(normal_matrix * (hit_bary.x * n1 + hit_bary.y * n2 + (1.0 - hit_bary.x - hit_bary.y) * n0));
+    vec3 face_normal = normalize(normal_matrix * cross(normalize(p1 - p0), normalize(p2 - p0)));
+    
     if (sign(dot(normal, ray_direction)) != sign(dot(face_normal, ray_direction)))
     {
         normal = face_normal;
     }
+    light_normal = normal;
+
     hit.normal = normal;
 
     hit.material_index = geometries[hit_geometry].material_index;

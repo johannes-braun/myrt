@@ -11,6 +11,8 @@
 
 #include "thread_pool.hpp"
 
+#include <format>
+
 namespace stbi
 {
   template<typename T>
@@ -62,7 +64,7 @@ namespace stbi
 const static std::filesystem::path res_dir = "../../../res";
 
 void render_function(std::stop_token stop_token, sf::RenderWindow* window);
-std::vector<myrt::geometric_object> load_object_file(myrt::scene& scene, std::filesystem::path const& path, float import_scale = 1.0f);
+std::vector<myrt::geometric_object> load_object_file(myrt::scene& scene, std::filesystem::path const& path, float import_scale = 6.0f);
 std::pair<GLuint, GLuint> load_cubemap(std::filesystem::path folder);
 GLuint load_bokeh();
 float focus = 10.0f;
@@ -106,6 +108,7 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
 {
   myrt::thread_pool loading_pool;
   myrt::gl::start(*window);
+  std::format_to(std::ostreambuf_iterator(std::cout), "{} starting...", "Rendering");
 
   myrt::scene scene;
   myrt::pathtracer pathtracer;
@@ -113,7 +116,7 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
   myrt::sequential_pathtracer seq_pt;
 
   rnu::cameraf camera(rnu::vec3{ 0.0f, 0.0f, -15.f });
-  myrt::async_resource<std::vector<myrt::geometric_object>> objects_resource(loading_pool, [&] { sf::Context context; return load_object_file(scene, "podium.obj"); });
+  myrt::async_resource<std::vector<myrt::geometric_object>> objects_resource(loading_pool, [&] { sf::Context context; return load_object_file(scene, "podium.obj", 1); });
   myrt::async_resource<std::pair<GLuint, GLuint>> cube_resource(loading_pool, [] { sf::Context context; return load_cubemap("christmas_photo"); });
 
   GLuint bokeh = load_bokeh();
@@ -190,6 +193,8 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
 
   GLuint fbo;
   glCreateFramebuffers(1, &fbo);
+
+  objects_resource.wait();
 
   for (auto frame : myrt::gl::next_frame(*window)) {
     if (stop_token.stop_requested())
@@ -405,7 +410,9 @@ std::vector<myrt::geometric_object> load_object_file(myrt::scene& scene, std::fi
       }
     }
   };
-  char input_file_buf[256] = "podium.obj";
+  char input_file_buf[256]{};
+  auto const pstr = path.string();
+  std::strncpy(input_file_buf, pstr.c_str(), pstr.length());
   load_obj(res_dir / input_file_buf);
   return objects;
 }

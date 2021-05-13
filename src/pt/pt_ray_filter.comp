@@ -11,12 +11,10 @@ struct trace_output_t {
 
   vec2 uv;
   int material_index;
-  int _p0;
   
+  uint light_color;
   vec3 light_direction;
-  int _p1;
-  vec3 light_contribution;
-  int _p2;
+  float light_strength;
 };
 
 struct generate_output_t {
@@ -31,10 +29,10 @@ struct generate_output_t {
   float pad[3];
 };
 
-layout(binding = 0, std430) restrict readonly buffer GenerateOutput { generate_output_t generate_input[]; };
+layout(binding = 0, std430) restrict  buffer GenerateOutput { generate_output_t generate_input[]; };
 layout(binding = 1, std430) restrict readonly buffer TraceOutput { trace_output_t trace_output[]; };
 layout(binding = 2, std430) restrict writeonly buffer FilterOutput { generate_output_t filter_output[]; };
-layout(binding = 3, std430) restrict buffer AccessControl { 
+layout(binding = 3, std430) restrict readonly buffer AccessControl { 
   uint num_elements;
   uint num_groups_x;
   uint num_groups_y;
@@ -47,8 +45,6 @@ layout(binding = 4, std430) restrict buffer AccessControlTarget {
   uint target_num_groups_z;
 };
 
-shared uint number_of_elements = 0;
-
 void main() {
   uint id = gl_GlobalInvocationID.x;
   if (id >= num_elements)
@@ -59,6 +55,7 @@ void main() {
   if (trace_output[id].intersects != 0)
   {
     uint insert_at = atomicAdd(target_num_elements, 1);
+
     filter_output[insert_at] = generate_input[trace_output[id].generated_ray];
     if(insert_at % group_size == 0)
       atomicAdd(target_num_groups_x, 1);

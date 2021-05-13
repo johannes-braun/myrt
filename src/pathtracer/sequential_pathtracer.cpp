@@ -20,7 +20,7 @@ namespace myrt {
     GLint len;
     GLint binding = GL_INVALID_INDEX;
     glGetProgramResourceiv(program, GL_SHADER_STORAGE_BLOCK, index, 1, &prop, 1, &len, &binding);
-
+    
     if (binding == GL_INVALID_INDEX)
       return std::nullopt;
     return binding;
@@ -71,15 +71,21 @@ namespace myrt {
     }
 
     pass_generate();
+    glFinish();
 
     for (int i = 0; i < 8; ++i)
     {
       pass_trace(scene);
+      glFinish();
       pass_color(false);
+      glFinish();
       pass_filter();
+      glFinish();
     }
     pass_trace(scene);
+    glFinish();
     pass_color(true);
+    glFinish();
 
     m_sample_counter++;
   }
@@ -264,6 +270,8 @@ namespace myrt {
     auto const count_x = (m_image_size.x + m_generate_group_sizes.x - 1) / m_generate_group_sizes.x;
     auto const count_y = (m_image_size.y + m_generate_group_sizes.y - 1) / m_generate_group_sizes.y;
     glDispatchCompute(count_x, count_y, 1);
+    glMemoryBarrierByRegion(GL_SHADER_STORAGE_BARRIER_BIT);
+    glMemoryBarrier(GL_COMMAND_BARRIER_BIT);
   }
   void sequential_pathtracer::pass_trace(scene& scene)
   {
@@ -319,6 +327,8 @@ namespace myrt {
 
     glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, m_filter_control_buffer);
     glDispatchComputeIndirect(offsetof(filter_access_t, num_groups_x));
+    glMemoryBarrierByRegion(GL_SHADER_STORAGE_BARRIER_BIT);
+    glMemoryBarrier(GL_COMMAND_BARRIER_BIT);
   }
   void sequential_pathtracer::create_trace_shader(scene& scene)
   {
@@ -372,10 +382,6 @@ namespace myrt {
 
     m_trace_bindings.random_texture = if_empty(sampler_binding(m_trace_shader, "random_texture"));
     m_trace_bindings.random_sample = if_empty(uniform_location(m_trace_shader, "random_sample"));
-
-    GLint group_sizes[3]{};
-    glGetProgramiv(m_trace_shader, GL_COMPUTE_WORK_GROUP_SIZE, group_sizes);
-    m_trace_group_size = group_sizes[0];
   }
   void sequential_pathtracer::pass_filter()
   {
@@ -400,7 +406,6 @@ namespace myrt {
     std::swap(m_generate_buffer, m_filter_buffer);
     glMemoryBarrierByRegion(GL_SHADER_STORAGE_BARRIER_BIT);
     glMemoryBarrier(GL_COMMAND_BARRIER_BIT);
-    return;
   }
   void sequential_pathtracer::create_filter_shader()
   {
@@ -424,10 +429,6 @@ namespace myrt {
     m_ray_filter_bindings.generate_buffer = if_empty(storage_buffer_binding(m_ray_filter_shader, "GenerateOutput"));
     m_ray_filter_bindings.trace_buffer = if_empty(storage_buffer_binding(m_ray_filter_shader, "TraceOutput"));
     m_ray_filter_bindings.filter_buffer = if_empty(storage_buffer_binding(m_ray_filter_shader, "FilterOutput"));
-
-    GLint group_sizes[3]{};
-    glGetProgramiv(m_ray_filter_shader, GL_COMPUTE_WORK_GROUP_SIZE, group_sizes);
-    m_ray_filter_group_size = group_sizes[0];
   }
   void sequential_pathtracer::pass_color(bool force_write)
   {
@@ -458,6 +459,8 @@ namespace myrt {
 
     glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, m_filter_control_buffer);
     glDispatchComputeIndirect(offsetof(filter_access_t, num_groups_x));
+    glMemoryBarrierByRegion(GL_SHADER_STORAGE_BARRIER_BIT);
+    glMemoryBarrier(GL_COMMAND_BARRIER_BIT);
   }
   void sequential_pathtracer::create_color_shader()
   {
@@ -487,9 +490,5 @@ namespace myrt {
     m_color_bindings.random_texture = if_empty(sampler_binding(m_color_shader, "random_texture"));
     m_color_bindings.random_sample = if_empty(uniform_location(m_color_shader, "random_sample"));
     m_color_bindings.cubemap = if_empty(sampler_binding(m_color_shader, "cubemap"));
-
-    GLint group_sizes[3]{};
-    glGetProgramiv(m_color_shader, GL_COMPUTE_WORK_GROUP_SIZE, group_sizes);
-    m_color_group_size = group_sizes[0];
   }
 }
