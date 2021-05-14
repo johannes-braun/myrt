@@ -60,6 +60,8 @@ struct hit_t
   vec2 uv;
   bool hits;
   int material_index;
+
+  int hits_light;
 };
 
 #include "intersect.glsl"
@@ -124,7 +126,6 @@ struct light_t
   vec2 attenuation;
 } test_lights[2];
 
-vec3 light_normal;
 int light_index = 0;
 vec3 point_on_light;
 
@@ -136,11 +137,11 @@ void main() {
   }
 
   test_lights[0].position = vec3(4, 5, 4);
-  test_lights[0].color = 25*vec3(1, 1.8, 3);
-  test_lights[0].radius = 0.2f;
+  test_lights[0].color = 20*vec3(1, 1.8, 3);
+  test_lights[0].radius = 0.4f;
   test_lights[1].position = vec3(-4, 3, 5);
-  test_lights[1].color = 12*vec3(3, 1.8, 1);
-  test_lights[1].radius = 0.1f;
+  test_lights[1].color = 20*vec3(3, 1.8, 1);
+  test_lights[1].radius = 0.4f;
 
   generate_output_t base = generate_output[id];
   
@@ -157,7 +158,18 @@ void main() {
   point_on_light = test_lights[light_index].position + normalize(vec3(random_next(), random_next(), random_next())) * test_lights[light_index].radius * sqrt(random_next());
     
   hit_t hit = nearest_hit(base.origin, base.direction, 1.0 / 0.0);
-  
+
+  for(int l = DONT_OPTIMIZE_ZERO; l < test_lights.length(); ++l)
+  {
+      float t_light = intersect_sphere(base.origin, base.direction, test_lights[l].position, test_lights[l].radius);
+      if(t_light > 0 && (!hit.hits||t_light < hit.t))
+      {
+        hit.hits = true;
+        hit.t = t_light;
+        hit.hits_light = l;
+      }
+  }
+
   result.light_direction = vec3(0);
   result.light_color = 0;
   result.light_strength = 0;
@@ -173,14 +185,27 @@ void main() {
     {
       result.intersects = 0;
     }
+    
     vec3 path_to_light = point_on_light - hit.position;
     vec3 direction_to_light = normalize(path_to_light);
     float distance_to_light = length(path_to_light);
-
-    if(!any_hit(hit.position + light_normal * 0.01, direction_to_light, length(path_to_light)))
+    if(hit.hits_light >= 0)
+    {
+      result.intersects = 2;
+//      
+//      result.light_direction = direction_to_light;
+//      vec3 ref = test_lights[light_index].color;// * max(0, dot(direction_to_light, hit.normal));
+//      vec3 color = ref * test_lights.length() / (distance_to_light);
+//
+      distance_to_light = distance(base.origin, base.origin + t * base.direction);
+      vec3 col = test_lights[hit.hits_light].color;
+      result.light_strength = length(col);
+      result.light_color = packUnorm4x8(vec4(col, 0) / result.light_strength);
+    }
+    else if(!any_hit(hit.position + direction_to_light * 0.01, direction_to_light, length(path_to_light)))
     {
       result.light_direction = direction_to_light;
-      vec3 ref = test_lights[light_index].color * max(0, dot(direction_to_light, light_normal));
+      vec3 ref = test_lights[light_index].color;// * max(0, dot(direction_to_light, hit.normal));
       vec3 color = ref * test_lights.length() / (distance_to_light);
       result.light_strength = length(color);
       result.light_color = packUnorm4x8(vec4(color, 0) / result.light_strength);
@@ -301,6 +326,7 @@ bool any_hit(vec3 ray_origin, vec3 ray_direction, float max_distance)
 hit_t nearest_hit(vec3 ray_origin, vec3 ray_direction, float max_distance)
 {
     hit_t hit;
+    hit.hits_light = -1;
 
     traversal_init();
     traversal.any_hit = false;
@@ -316,9 +342,11 @@ hit_t nearest_hit(vec3 ray_origin, vec3 ray_direction, float max_distance)
       hit_t h = march_sdf(ray_origin, ray_direction, hit.hits ? hit.t : max_distance, false, sdf_marching_steps, sdf_marching_epsilon);
       if (h.hits && h.t < hit.t) {
         hit = h;
+        hit.hits_light = -1;
         hit_marched = true;
       }
     }
+
     if (hit_marched)
       return hit;
 
@@ -345,7 +373,6 @@ hit_t nearest_hit(vec3 ray_origin, vec3 ray_direction, float max_distance)
     {
         normal = face_normal;
     }
-    light_normal = normal;
 
     hit.normal = normal;
 

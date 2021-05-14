@@ -56,7 +56,8 @@ namespace myrt
     m_vertices.insert(m_vertices.end(), points.begin(), points.end());
     m_normals.insert(m_normals.end(), normals.begin(), normals.end());
     const auto aabbs = generate_triangle_bounds(indices, points);
-    bvh& b = *m_object_bvhs.emplace_back(std::make_unique<bvh>(aabbs));
+
+    bvh& b = *m_object_bvhs.emplace_back(std::make_unique<bvh>(aabbs, split_aabbs));
     m_bvh_nodes.insert(m_bvh_nodes.end(), b.nodes().begin(), b.nodes().end());
     m_bvh_indices.insert(m_bvh_indices.end(), b.reordered_indices().begin(), b.reordered_indices().end());
 
@@ -276,7 +277,7 @@ namespace myrt
   {
     if (!m_global_bvh && !m_drawables.empty())
     {
-      m_global_bvh = std::make_unique<bvh>(m_drawable_aabbs);
+      m_global_bvh = std::make_unique<bvh>(m_drawable_aabbs, dont_split);
     }
     std::optional<hit> h = std::nullopt;
 
@@ -321,7 +322,7 @@ namespace myrt
     if (!m_drawables.empty() && (m_current_drawable_hash != m_last_drawable_hash))
     {
       m_last_drawable_hash = m_current_drawable_hash;
-      m_global_bvh = std::make_unique<bvh>(m_drawable_aabbs);
+      m_global_bvh = std::make_unique<bvh>(m_drawable_aabbs, dont_split);
       fill_buffer(m_scene_buffers.global_bvh_nodes_buffer, m_global_bvh->nodes());
       fill_buffer(m_scene_buffers.global_bvh_indices_buffer, m_global_bvh->reordered_indices());
       glNamedBufferData(m_scene_buffers.drawable_buffer, detail::vector_bytes(m_drawables), m_drawables.data(), GL_DYNAMIC_DRAW);

@@ -52,7 +52,7 @@ void main() {
     return;
   }
 
-  if (trace_output[id].intersects != 0)
+  if (trace_output[id].intersects == 1)
   {
     uint insert_at = atomicAdd(target_num_elements, 1);
 

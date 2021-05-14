@@ -77,5 +77,6 @@ void main()
   result.pixel_x = pixel.x;
   result.pixel_y = pixel.y;
   result.pdf = 1.0;
+  result.pad = float[3](0,0,0);
   generate_output[id] = result;
 }

@@ -116,8 +116,8 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
   myrt::sequential_pathtracer seq_pt;
 
   rnu::cameraf camera(rnu::vec3{ 0.0f, 0.0f, -15.f });
-  myrt::async_resource<std::vector<myrt::geometric_object>> objects_resource(loading_pool, [&] { sf::Context context; return load_object_file(scene, "podium.obj", 1); });
-  myrt::async_resource<std::pair<GLuint, GLuint>> cube_resource(loading_pool, [] { sf::Context context; return load_cubemap("christmas_photo"); });
+  myrt::async_resource<std::vector<myrt::geometric_object>> objects_resource(loading_pool, [&] { sf::Context context; return load_object_file(scene, "bigone.obj", 1); });
+  myrt::async_resource<std::pair<GLuint, GLuint>> cube_resource(loading_pool, [] { sf::Context context; return load_cubemap("whipple_creek"); });
 
   GLuint bokeh = load_bokeh();
   myrt::scene::material_pointer texmat;

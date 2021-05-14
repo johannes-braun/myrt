@@ -51,6 +51,18 @@ layout(binding = 1) uniform samplerCube cubemap;
 layout(location = 0) uniform uint sample_index;
 layout(location = 1) uniform bool force_write_color;
 layout(location = 2) uniform int random_sample;
+layout(location = 3) uniform int bounce_index;
+vec3 tonemapFilmic(vec3 x) {
+  vec3 X = max(vec3(0.0), x - 0.004);
+  vec3 result = (X * (6.2 * X + 0.5)) / (X * (6.2 * X + 1.7) + 0.06);
+  return pow(result, vec3(2.2));
+}
+
+float tonemapFilmic(float x) {
+  float X = max(0.0, x - 0.004);
+  float result = (X * (6.2 * X + 0.5)) / (X * (6.2 * X + 1.7) + 0.06);
+  return pow(result, 2.2);
+}
 
 vec3 unreal(vec3 x) {
   return x / (x + 0.155) * 1.019;
@@ -59,30 +71,39 @@ vec3 unreal(vec3 x) {
 float unreal(float x) {
   return x / (x + 0.155) * 1.019;
 }
+
+bool li = false;
 vec3 tonemap(vec3 col)
 {
-  col = clamp(col, 0, 10);
-  return unreal(col);
+  col = li ? col : clamp(col, 0, 30);
+  return tonemapFilmic(col);
 }
 
-void accumulate_color(vec4 new_color, ivec2 pixel)
+void accumulate_color(vec4 new_colori, ivec2 pixel)
 {
-  new_color.rgb = tonemap(new_color.rgb);
+  vec4 new_color = vec4(tonemap(new_colori.rgb).rgb, new_colori.w);
 
-  vec4 last_color = imageLoad(output_image, pixel);
+  vec4 lic = imageLoad(debug_image, pixel);
+  vec4 last_color = imageLoad(output_image, pixel) - lic;
   vec4 comparison = last_color;
   if(sample_index == 0)
   {
+    if(li)
+      lic = 10*new_colori;
+    else
+      lic = vec4(0);
     last_color = new_color;
-    comparison = vec4(1);
   }
   else
   {
+    if(li)
+      lic = mix(lic, 10*new_color, 1.0 / float(sample_index + 1));
+    else
+      lic = mix(lic, vec4(0), 1.0 / float(sample_index + 1));
     last_color = mix(last_color, new_color, 1.0 / float(sample_index + 1));
-    comparison = vec4(abs(last_color - comparison));
   }
-  imageStore(debug_image, pixel, comparison);
-  imageStore(output_image, pixel, last_color);
+  imageStore(debug_image, pixel, lic);
+  imageStore(output_image, pixel, last_color + lic);
 }
 
 struct material_sample_t
@@ -98,15 +119,15 @@ material_info_t get_test_material(int index) {
   vec3 diff = vec3(1);
   switch(index)
   {
-    case 0: diff = vec3(1, 0, 0.3); met = 1; break;
-    case 1: diff = vec3(0, 1, 0.3); tm = 1.0; break;
+    case 0: diff = vec3(1, 0, 0.3); break;
+    case 1: diff = vec3(0, 1, 0.3); tm = 2.0; break;
     case 2: diff = vec3(0.4, 0.1, 0.5); break;
     case 3: diff = vec3(0.3, 0.4,0.0); tm = 1.0; break;
-    case 4: diff = vec3(1,1, 1.0); met = 1; break;
+    case 4: diff = vec3(0.5); tm = 1; break;
   };
 
   material_info_t m;
-  m.roughness = 0.2;
+  m.roughness = 0.1;
   m.albedo_rgba_unorm = color_make(vec4(diff, 1));
   m.ior = 1.5;
   m.metallic = met;
@@ -149,6 +170,13 @@ void main() {
   ivec2 pixel = ivec2(gen.pixel_x, gen.pixel_y);
   if(trace.intersects != 0)
   {
+    if(trace.intersects == 2) // hit light
+    {
+      li = true;
+      accumulate_color(vec4(unpackUnorm4x8(trace.light_color).rgb * trace.light_strength * gen.reflectance, 0) + gen.color, ivec2(pixel));
+      return;
+    }
+
     random_init(random_texture, pixel, random_sample);
     float rx = random_value(int(int(56128966 * gen.random_value) + 20945293*id));
     float ry = random_value(int(int(12233432 * gen.random_value) + 74867839*id));
@@ -180,7 +208,8 @@ void main() {
     {
       material_sample_t light_material;
       material_sample(trace, trace.light_direction, -gen.direction, ior_front, ior_back, light_material);
-      gen.color += vec4(unpackUnorm4x8(trace.light_color).rgb * trace.light_strength * light_material.reflectance, 0);
+      
+      gen.color += vec4(unpackUnorm4x8(trace.light_color).rgb * trace.light_strength * light_material.reflectance * gen.reflectance, 0);
     }
 
     gen.pdf *= material.pdf;

@@ -323,7 +323,7 @@ namespace myrt {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_trace_bindings.sdf_drawables, scene.get_scene_buffers().sdf_drawable_buffer);
 
     glUniform1i(m_trace_bindings.sdf_marching_steps, 400);
-    glUniform1f(m_trace_bindings.sdf_marching_epsilon, 0.75e-6f);
+    glUniform1f(m_trace_bindings.sdf_marching_epsilon, 1e-5f);
 
     glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, m_filter_control_buffer);
     glDispatchComputeIndirect(offsetof(filter_access_t, num_groups_x));

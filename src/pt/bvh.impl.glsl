@@ -1,5 +1,5 @@
 #ifndef UINT_TYPE
-#define UINT_TYPE uint
+#define UINT_TYPE uint64_t
 #endif
 
 bool MYRT_BVH_VISIT_PRIMITIVE(vec3 origin, vec3 direction,
