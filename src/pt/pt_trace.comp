@@ -136,12 +136,12 @@ void main() {
     return;
   }
 
-  test_lights[0].position = vec3(4, 5, 4);
-  test_lights[0].color = 20*vec3(1, 1.8, 3);
-  test_lights[0].radius = 0.4f;
-  test_lights[1].position = vec3(-4, 3, 5);
-  test_lights[1].color = 20*vec3(3, 1.8, 1);
-  test_lights[1].radius = 0.4f;
+  test_lights[0].position = 2*vec3(4, 5, 4);
+  test_lights[0].color = 120*vec3(1, 1.8, 3);
+  test_lights[0].radius = 1.5f;
+  test_lights[1].position = 2*vec3(-4, 3, 5);
+  test_lights[1].color = 120*vec3(3, 1.8, 1);
+  test_lights[1].radius = 1.5f;
 
   generate_output_t base = generate_output[id];
   
@@ -189,24 +189,20 @@ void main() {
     vec3 path_to_light = point_on_light - hit.position;
     vec3 direction_to_light = normalize(path_to_light);
     float distance_to_light = length(path_to_light);
+    vec3 lnorm = faceforward(hit.normal, base.direction, hit.normal);
+    result.light_direction = direction_to_light;
+
     if(hit.hits_light >= 0)
     {
       result.intersects = 2;
-//      
-//      result.light_direction = direction_to_light;
-//      vec3 ref = test_lights[light_index].color;// * max(0, dot(direction_to_light, hit.normal));
-//      vec3 color = ref * test_lights.length() / (distance_to_light);
-//
-      distance_to_light = distance(base.origin, base.origin + t * base.direction);
       vec3 col = test_lights[hit.hits_light].color;
       result.light_strength = length(col);
       result.light_color = packUnorm4x8(vec4(col, 0) / result.light_strength);
     }
-    else if(!any_hit(hit.position + direction_to_light * 0.01, direction_to_light, length(path_to_light)))
+    else if(dot(direction_to_light, lnorm) > 0 && !any_hit(hit.position + direction_to_light * 0.01, direction_to_light, length(path_to_light)))
     {
-      result.light_direction = direction_to_light;
-      vec3 ref = test_lights[light_index].color;// * max(0, dot(direction_to_light, hit.normal));
-      vec3 color = ref * test_lights.length() / (distance_to_light);
+      vec3 ref = test_lights[light_index].color;
+      vec3 color = ref * test_lights.length() / (1+distance_to_light * distance_to_light);
       result.light_strength = length(color);
       result.light_color = packUnorm4x8(vec4(color, 0) / result.light_strength);
     }

@@ -19,6 +19,7 @@ namespace myrt {
     void set_focus(float focus);
     void set_bokeh_mask(GLuint bokeh_texture);
     void set_cubemap(GLuint map, GLuint sampler);
+    void set_num_bounces(int num_bounces);
 
     std::uint32_t sample_count() const;
 
@@ -74,7 +75,7 @@ namespace myrt {
     void create_filter_shader();
     void load_filter_bindings();
 
-    void pass_color(bool force_write);
+    void pass_color(bool force_write, int bounce);
     void create_color_shader();
     void load_color_bindings();
 
@@ -101,6 +102,7 @@ namespace myrt {
     std::shared_ptr<texture_t> m_random_texture;
     rnu::vec2 m_lens_size = { 10, 10 };
     float m_focus = 10.0f;
+    int m_num_bounces = 10;
 
     GLuint m_bokeh_texture = 0;
     GLuint m_cubemap = 0;
@@ -178,6 +180,7 @@ namespace myrt {
       GLint random_texture;
       GLint random_sample;
       GLint cubemap;
+      GLint bounce_index;
     } m_color_bindings;
   };
 }

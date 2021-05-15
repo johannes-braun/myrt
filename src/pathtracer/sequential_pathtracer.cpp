@@ -72,19 +72,19 @@ namespace myrt {
 
     pass_generate();
     glFinish();
-
-    for (int i = 0; i < 8; ++i)
+    constexpr int num_bounces = 8;
+    for (int i = 0; i < num_bounces; ++i)
     {
       pass_trace(scene);
       glFinish();
-      pass_color(false);
+      pass_color(false, i);
       glFinish();
       pass_filter();
       glFinish();
     }
     pass_trace(scene);
     glFinish();
-    pass_color(true);
+    pass_color(true, num_bounces);
     glFinish();
 
     m_sample_counter++;
@@ -147,6 +147,10 @@ namespace myrt {
       m_cubemap_sampler = sampler;
       invalidate_counter();
     }
+  }
+  void sequential_pathtracer::set_num_bounces(int num_bounces)
+  {
+    m_num_bounces = num_bounces;
   }
   std::uint32_t sequential_pathtracer::sample_count() const
   {
@@ -430,7 +434,7 @@ namespace myrt {
     m_ray_filter_bindings.trace_buffer = if_empty(storage_buffer_binding(m_ray_filter_shader, "TraceOutput"));
     m_ray_filter_bindings.filter_buffer = if_empty(storage_buffer_binding(m_ray_filter_shader, "FilterOutput"));
   }
-  void sequential_pathtracer::pass_color(bool force_write)
+  void sequential_pathtracer::pass_color(bool force_write, int bounce)
   {
     std::uniform_int_distribution<> dist;
 
@@ -453,6 +457,7 @@ namespace myrt {
 
     glUniform1ui(m_color_bindings.sample_index, m_sample_counter);
     glUniform1i(m_color_bindings.force_write_color, force_write);
+    glUniform1i(m_color_bindings.bounce_index, bounce);
 
     glBindSampler(m_color_bindings.cubemap, m_cubemap_sampler);
     glBindTextureUnit(m_color_bindings.cubemap, m_cubemap);
@@ -490,5 +495,6 @@ namespace myrt {
     m_color_bindings.random_texture = if_empty(sampler_binding(m_color_shader, "random_texture"));
     m_color_bindings.random_sample = if_empty(uniform_location(m_color_shader, "random_sample"));
     m_color_bindings.cubemap = if_empty(sampler_binding(m_color_shader, "cubemap"));
+    m_color_bindings.bounce_index = if_empty(uniform_location(m_color_shader, "bounce_index"));
   }
 }

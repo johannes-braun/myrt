@@ -16,18 +16,6 @@ namespace myrt
     std::array<aabb_t, bvh::binned_sah_bin_count> accum_aabbsr{};
     std::array<aabb_t, bvh::binned_sah_bin_count> accum_cbounds{};
     std::array<int, bvh::binned_sah_bin_count> accum_counts{};
-    //std::array<aabb_t, bvh::binned_sah_bin_count> axis_bins{};
-    ////std::array<int, bvh::binned_sah_bin_count> axis_counts{};
-    //std::array<aabb_t, bvh::binned_sah_bin_count-1> accum_aabbs{};
-    //std::array<aabb_t, bvh::binned_sah_bin_count-1> accum_aabbs_rev{};
-    //std::array<int, bvh::binned_sah_bin_count> accum_counts{};
-    //std::array<int, bvh::binned_sah_bin_count - 1> splits{};
-  };
-
-  struct split_primitive_t
-  {
-    detail::default_index_type index;
-    primitive_split_result_t split;
   };
 
   struct build_state_t
@@ -40,8 +28,6 @@ namespace myrt
     std::vector<bvh::index_type> inserter_indices;
 
     std::vector<sah_axis_info_t> sah_axises;
-
-    std::vector<split_primitive_t> last_split_primitives;
   };
 
   const primitive_split_func dont_split = [](primitive_split_request_t req) -> primitive_split_result_t
@@ -62,13 +48,13 @@ namespace myrt
 
   [[nodiscard]] std::tuple<int, float, bool, int, int> bvh::compute_split_axis(bvh_node_t const& node, build_state_t& state)
   {
-    aabb_t sub_aabb/* = node.aabb()*/;
+    aabb_t sub_aabb;
     auto const count = node.second_child - node.first_child + 1;
     for (auto index = node.first_child; index <= node.second_child; ++index)
     {
       const auto centroid = state.aabbs[index].centroid();
       sub_aabb.enclose(centroid);
-    }/**/
+    }
 
     auto const sub_aabb_size = sub_aabb.dimension();
     auto const step = sub_aabb_size / float(bvh::binned_sah_bin_count);
@@ -81,15 +67,11 @@ namespace myrt
       auto relative = centroid - sub_aabb.min;
       auto integral = relative / step;
       rnu::vec3i const bin_id = rnu::clamp(rnu::vec3i(integral), rnu::vec3i(0), rnu::vec3i(bvh::binned_sah_bin_count - 1));
-      axises[0].axis_bins[bin_id.x].enclose(state.aabbs[index]);
-      axises[1].axis_bins[bin_id.y].enclose(state.aabbs[index]);
-      axises[2].axis_bins[bin_id.z].enclose(state.aabbs[index]);
-      axises[0].axis_bounds[bin_id.x].enclose(state.aabbs[index].centroid());
-      axises[1].axis_bounds[bin_id.y].enclose(state.aabbs[index].centroid());
-      axises[2].axis_bounds[bin_id.z].enclose(state.aabbs[index].centroid());
-      axises[0].axis_counts[bin_id.x]++;
-      axises[1].axis_counts[bin_id.y]++;
-      axises[2].axis_counts[bin_id.z]++;
+      for (auto i = 0; i < 3; ++i) {
+        axises[i].axis_bins[bin_id[i]].enclose(state.aabbs[index]);
+        axises[i].axis_bounds[bin_id[i]].enclose(state.aabbs[index].centroid());
+        axises[i].axis_counts[bin_id[i]]++;
+      }
     }
 
     const auto enclose_reduce = [](aabb_t current, const aabb_t& next) -> aabb_t { current.enclose(next); return current; };
@@ -137,148 +119,11 @@ namespace myrt
       int aid = 0;
     }
 
-    float const cost_without_split = axises[best_axis].accum_counts.back();
+    float const cost_without_split = static_cast<float>(axises[best_axis].accum_counts.back());
     float const cost_factor = best_cost / cost_without_split;
 
-    //return std::make_tuple(best_axis, sub_aabb.min[best_axis] + step[best_axis] * float(best_axis_partition), cost_factor < 3);
-    //aabb_t sub_aabb = node.aabb();
-    ////auto const count = node.second_child - node.first_child + 1;
-    ////for (auto index = node.first_child; index <= node.second_child; ++index)
-    ////{
-    ////  //const auto centroid = state.aabbs[index].centroid();
-    ////  sub_aabb.enclose(state.aabbs[index]);
-    ////}
-
-
-    //auto const sub_aabb_size = sub_aabb.dimension();
-    //auto const step = sub_aabb_size / float(bvh::binned_sah_bin_count);
-
-    //auto& axises = state.sah_axises;
-
-    ///*
-    //For each primitive index
-    //- on each axis
-    //- - 
-    //*/
-
-    ///*for (auto index = node.first_child; index <= node.second_child; ++index)
-    //{
-    //  const auto aabb_min = state.aabbs[index].min;
-    //  auto relative = aabb_min - sub_aabb.min;
-    //  auto integral = rnu::vec3i(relative / step);
-    //  auto const num_steps_inside = state.aabbs[index].dimension() / step;
-    //  for (int i = 0; i < 3; ++i) {
-    //    auto const end = integral[i] + std::ceil(num_steps_inside[i]);
-    //    for (int s = integral[i]; s < bvh::binned_sah_bin_count; ++s)
-    //    {
-    //      if (s < end)
-    //      {
-    //        float const plane = sub_aabb.min[i] + (s+1) * step[i];
-
-    //        primitive_split_result_t split = m_split_primitive(primitive_split_request_t{
-    //          .index = index,
-    //          .aabb = state.aabbs[index],
-    //          .axis = i,
-    //          .position = plane
-    //          });
-
-    //        if (split.lower) {
-    //          axises[i].axis_bins[s].enclose(split.lower.value());
-    //        }
-    //        if (split.higher) {
-    //          axises[i].axis_bins[s+1].enclose(split.higher.value());
-
-    //          if (split.lower)
-    //          {
-    //            axises[i].accum_counts[s+1]++;
-    //            axises[i].splits[s]++;
-    //          }
-    //        }
-    //      }
-    //      axises[i].accum_counts[s]++;
-    //    }
-    //  }
-    //}*/
-    //for (auto index = node.first_child; index <= node.second_child; ++index)
-    //{
-    //  const auto centroid = state.aabbs[index].centroid();
-    //  auto relative = centroid - sub_aabb.min;
-    //  auto integral = relative / step;
-    //  rnu::vec3i const bin_id = rnu::clamp(rnu::vec3i(integral), rnu::vec3i(0), rnu::vec3i(bvh::binned_sah_bin_count - 1));
-    //  axises[0].axis_bins[bin_id.x].enclose(state.aabbs[index]);
-    //  axises[1].axis_bins[bin_id.y].enclose(state.aabbs[index]);
-    //  axises[2].axis_bins[bin_id.z].enclose(state.aabbs[index]);
-    //  axises[0].axis_counts[bin_id.x]++;
-    //  axises[1].axis_counts[bin_id.y]++;
-    //  axises[2].axis_counts[bin_id.z]++;
-    //}
-
-    ////const auto enclose_reduce = [](aabb_t current, const aabb_t& next) -> aabb_t { current.enclose(next); return current; };
-    ////for (int axis = 0; axis < 3; ++axis)
-    ////{
-    ////  std::partial_sum(begin(axises[axis].axis_bins), end(axises[axis].axis_bins)-1, begin(axises[axis].accum_aabbs), enclose_reduce);
-    ////  std::partial_sum(rbegin(axises[axis].axis_bins), rend(axises[axis].axis_bins)-1, rbegin(axises[axis].accum_aabbs_rev), enclose_reduce);
-    ////  //std::partial_sum(begin(axises[axis].axis_counts), end(axises[axis].axis_counts), begin(axises[axis].accum_counts));
-    ////}
-    //const auto enclose_reduce = [](aabb_t current, const aabb_t& next) -> aabb_t { current.enclose(next); return current; };
-    //for (int axis = 0; axis < 3; ++axis)
-    //{
-    //  std::partial_sum(begin(axises[axis].axis_bins), end(axises[axis].axis_bins), begin(axises[axis].accum_aabbs), enclose_reduce);
-    //  std::partial_sum(begin(axises[axis].axis_counts), end(axises[axis].axis_counts), begin(axises[axis].accum_counts));
-    //}
-
-    //const float sap = sub_aabb.surface_area();
-    //float best_cost = std::numeric_limits<float>::max();
-    //int best_axis = 0;
-    //int best_axis_partition = 0;
-    //for (int axis = 0; axis < 3; ++axis)
-    //{
-    //  struct ao {
-    //    float c;
-    //    int cf;
-    //    int cs;
-    //    float af;
-    //    float as;
-    //  };
-    //  std::array<ao, bvh::binned_sah_bin_count> arr;
-
-    //  for (size_t index = 0; index < bvh::binned_sah_bin_count-1; ++index)
-    //  {
-    //    const auto count_first = axises[axis].accum_counts[index];
-    //    const auto count_second = axises[axis].accum_counts[bvh::binned_sah_bin_count - 1 - index];
-    //    const auto area_first = axises[axis].accum_aabbs[index].surface_area();
-    //    const auto area_second = axises[axis].accum_aabbs[bvh::binned_sah_bin_count - 1 - index].surface_area();
-    //    const auto cost = count_first * area_first * area_first / sap + count_second * area_second * area_second / sap;
-    //  /*  const auto count_first = axises[axis].accum_counts[index];
-    //    const auto count_second = axises[axis].accum_counts[bvh::binned_sah_bin_count - 2 - index];
-    //    const auto area_first = axises[axis].accum_aabbs[index].surface_area();
-    //    const auto area_second = axises[axis].accum_aabbs_rev[index].surface_area();
-    //    const auto cost = count_first * area_first/sap + count_second * area_second / sap;*/
-
-    //    arr[index] = ao{
-    //      cost, count_first, count_second, area_first, area_second
-    //    };
-
-    //    if (index == 31)
-    //      int ias = 0;
-
-    //    if (cost < best_cost)
-    //    {
-    //      if (index > 61)
-    //        int oaisd = 90;
-
-    //      best_axis = axis;
-    //      best_axis_partition = static_cast<int>(index);
-    //      best_cost = cost;
-    //    }
-    //  }
-    //}
-
-    //float const cost_without_split = axises[best_axis].accum_counts.back();
-    //float const cost_factor = best_cost / cost_without_split;
-
-    auto const nval = sub_aabb.min[best_axis] + step[best_axis] * (best_axis_partition + 1);//axises[best_axis].accum_cbounds[best_axis_partition].min[best_axis];
-    return std::make_tuple(best_axis, nval, true, /*axises[best_axis].splits[best_axis_partition]*/0, best_axis_partition);
+    auto const nval = sub_aabb.min[best_axis] + step[best_axis] * (best_axis_partition + 1);
+    return std::make_tuple(best_axis, nval, true, 0, best_axis_partition);
   }
 
   [[nodiscard]] std::vector<aabb_t> generate_triangle_bounds(std::span<detail::default_index_type const> indices, std::function<detail::default_point_type(detail::default_index_type)> const& get_point)
@@ -434,7 +279,7 @@ namespace myrt
 
       initial_state.sah_axises.clear();
       initial_state.sah_axises.resize(3);
-      const auto split_nodes = split(current_node, initial_state);
+      const auto split_nodes = split(current_node_index, current_node, initial_state);
 
       if (split_nodes.has_value())
       {
@@ -459,7 +304,7 @@ namespace myrt
 
     m_reordered_indices = initial_state.indices;
   }
-  std::optional<std::pair<bvh_node_t, bvh_node_t>> bvh::split(const bvh_node_t& current_node, build_state_t& build_state)
+  std::optional<std::pair<bvh_node_t, bvh_node_t>> bvh::split(index_type current_node_index, const bvh_node_t& current_node, build_state_t& build_state)
   {
     if (current_node.second_child - current_node.first_child < min_leaf_primitives)
       return std::nullopt;
@@ -484,7 +329,7 @@ namespace myrt
     int local_num_splits = 0;
     for (auto i = first; i != last; ++i)
     {
-      float const thres = 0.1 * build_state.full_aabb.dimension()[split_axis];
+      float const thres = 0.05 * build_state.full_aabb.dimension()[split_axis];
       primitive_split_result_t split;
       if (build_state.aabbs[i].dimension()[split_axis] > thres)
       {
@@ -554,8 +399,8 @@ namespace myrt
       }
     }
     if (local_num_splits > 0)
-      for (auto& node : m_nodes)
-        increment_if_larger(last, local_num_splits, node.node);
+      for (auto i = 0; i < m_nodes.size(); ++i)
+        increment_if_larger(last, local_num_splits, m_nodes[i].node);
 
     if (local_num_splits != num_splits)
     {

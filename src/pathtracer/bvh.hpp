@@ -180,7 +180,7 @@ namespace myrt
 
   private:
     void create(build_state_t& initial_state);
-    [[nodiscard]] std::optional<std::pair<bvh_node_t, bvh_node_t>> split(const bvh_node_t& current_node, build_state_t& build_state);
+    [[nodiscard]] std::optional<std::pair<bvh_node_t, bvh_node_t>> split(index_type current_node_index, const bvh_node_t& current_node, build_state_t& build_state);
     [[nodiscard]] std::tuple<int, float, bool, int, int> compute_split_axis(bvh_node_t const& node, build_state_t& state);
 
     std::vector<aligned_node_t> m_nodes;
