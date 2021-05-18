@@ -4,6 +4,7 @@
 #include <iostream>
 #include <array>
 #include <sstream>
+#include <regex>
 
 namespace myrt
 {
@@ -25,6 +26,18 @@ namespace myrt
         }
     }
 
+    std::string replace(std::string str, const std::string& sub1, const std::string& sub2)
+    {
+      if (sub1.empty())
+        return str;
+
+      std::size_t pos;
+      while ((pos = str.find(sub1)) != std::string::npos)
+        str.replace(pos, sub1.size(), sub2);
+
+      return str;
+    }
+
     void pretty_print_line(std::string line) {
         if (line.find("error") != std::string::npos)
             line = "\033[0;31m" + line + "\033[0m";
@@ -37,7 +50,13 @@ namespace myrt
         std::stringstream log_stream(log);
         for (std::string line; std::getline(log_stream, line);)
         {
-            pretty_print_line(line);
+          const std::regex re(R"(([^(]+)[ ]*\(([0-9]+)\)[ ]*:[ ]*([^:]+):)");
+
+          std::match_results<std::string::const_iterator> matches;
+          if (std::regex_search(line, matches, re))
+          {
+          }
+          pretty_print_line(line);
         }
     }
 

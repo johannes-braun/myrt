@@ -89,25 +89,25 @@ namespace myrt
     int best_axis_partition = 0;
     for (int axis = 0; axis < 3; ++axis)
     {
-      struct ao {
+     /* struct ao {
         float c;
         int cf;
         int cs;
         float af;
         float as;
       };
-      std::array<ao, bvh::binned_sah_bin_count> arr;
+      std::array<ao, bvh::binned_sah_bin_count> arr;*/
       for (size_t index = 0; index < bvh::binned_sah_bin_count - 1; ++index)
       {
         const auto count_first = axises[axis].accum_counts[index];
         const auto count_second = axises[axis].accum_counts[bvh::binned_sah_bin_count - 1 - index];
         const auto area_first = axises[axis].accum_aabbs[index].surface_area();
         const auto area_second = axises[axis].accum_aabbsr[index].surface_area();
-        const auto cost = count_first * area_first + count_second * area_second;
+        const auto cost = count_first * area_first / sap + count_second * area_second / sap;
 
-        arr[index] = ao{
+       /* arr[index] = ao{
           cost, count_first, count_second, area_first, area_second
-        };
+        };*/
         if (cost < best_cost)
         {
           best_axis = axis;
@@ -123,7 +123,7 @@ namespace myrt
     float const cost_factor = best_cost / cost_without_split;
 
     auto const nval = sub_aabb.min[best_axis] + step[best_axis] * (best_axis_partition + 1);
-    return std::make_tuple(best_axis, nval, true, 0, best_axis_partition);
+    return std::make_tuple(best_axis, nval, cost_factor <= 1, 0, best_axis_partition);
   }
 
   [[nodiscard]] std::vector<aabb_t> generate_triangle_bounds(std::span<detail::default_index_type const> indices, std::function<detail::default_point_type(detail::default_index_type)> const& get_point)
@@ -329,7 +329,7 @@ namespace myrt
     int local_num_splits = 0;
     for (auto i = first; i != last; ++i)
     {
-      float const thres = 0.05 * build_state.full_aabb.dimension()[split_axis];
+      float const thres = 0.05f * build_state.full_aabb.dimension()[split_axis];
       primitive_split_result_t split;
       if (build_state.aabbs[i].dimension()[split_axis] > thres)
       {

@@ -1,11 +1,14 @@
 #version 460 core
+#extension GL_ARB_bindless_texture : require
+#extension GL_NV_gpu_shader5 : require
 
 layout(local_size_x = 64) in;
+layout(bindless_sampler) uniform;
 
 #include "resample.glsl"
 #include "transform.glsl"
 #include "random.glsl"
-#include "pbr.glsl"
+//#include "pbr.glsl"
 
 struct generate_output_t {
   vec3  origin;
@@ -33,15 +36,22 @@ struct trace_output_t {
   float light_strength;
 };
 
+struct material_reference_t
+{
+  int id;
+  int offset;
+};
+
+layout(binding = 0, std430) restrict buffer GenerateInput { generate_output_t generate_output[]; };
+layout(binding = 1, std430) restrict readonly buffer TraceOutput { trace_output_t trace_output[]; };
 layout(binding = 2, std430) readonly buffer AccessControl { 
   uint num_elements;
   uint num_groups_x;
   uint num_groups_y;
   uint num_groups_z;
 };
-
-layout(binding = 0, std430) restrict buffer GenerateInput { generate_output_t generate_output[]; };
-layout(binding = 1, std430) restrict readonly buffer TraceOutput { trace_output_t trace_output[]; };
+layout(binding = 3, std430) restrict readonly buffer MaterialsBuffer { material_reference_t materials[]; };
+layout(binding = 4, std430) restrict readonly buffer MaterialsDataBuffer { float materials_data[]; };
 
 layout(binding = 0, rgba32f) uniform image2D debug_image;
 layout(binding = 1, rgba32f) uniform image2D output_image;
@@ -72,10 +82,8 @@ float unreal(float x) {
   return x / (x + 0.155) * 1.019;
 }
 
-bool li = false;
 vec3 tonemap(vec3 col)
 {
-  col = li ? col : clamp(col, 0, 30);
   return tonemapFilmic(col);
 }
 
@@ -92,7 +100,7 @@ vec4 unscale_rgb(vec4 col)
 void accumulate_color(vec4 new_colori, ivec2 pixel)
 {
   generate_output_t gen = generate_output[gl_GlobalInvocationID.x];
-  vec4 new_color = clamp(new_colori, 0, 2 + max(1, bounce_index-1) * 8);
+  vec4 new_color = clamp(new_colori, 0, 20);
 
   vec4 last_color = imageLoad(debug_image, pixel);
 
@@ -121,52 +129,13 @@ struct material_sample_t
   float pdf;
 };
 
-material_info_t get_test_material(int index) {
-  float met = 0.0;
-  float tm = 0.0;
-  vec3 diff = vec3(1);
-  switch(index)
-  {
-    case 0: diff = vec3(1, 0, 0.3); tm = 1.0; break;
-    case 1: diff = vec3(0, 1, 0.3); tm = 1.0; break;
-    case 2: diff = vec3(0.5); tm = 0.0; break;
-    case 3: diff = vec3(0.3, 0.1,1.0); tm = 1.0; break;
-    case 4: diff = vec3(1.0, 0.5, 0.33); tm = 1; break;
-    default: diff = vec3(1); tm = 1; break;
-  };
-
-  material_info_t m;
-  m.roughness = 0.7;
-  m.albedo_rgba_unorm = color_make(vec4(diff, 1));
-  m.ior = 1.5;
-  m.metallic = met;
-  m.transmission = tm;
-
-  m.roughness = clamp(m.roughness, 0.03, 1.0);
-  return m;
-}
-
-vec3 material_continue_ray(trace_output_t trace, vec2 random, vec3 towards_viewer, vec3 normal, float ior1, float ior2)
-{
-  return pbr_resample(random, get_test_material(trace.material_index), towards_viewer, normal, ior1, ior2);
-}
-
-material_sample_t sample_material_proto(int index, vec2 uv, vec3 normal, vec3 point, vec3 towards_light, vec3 towards_viewer, float ior1, float ior2)
-{
-  brdf_result_t ev;
-  pbr_eval(get_test_material(index), towards_viewer, towards_light, normal, ior1, ior2, ev);
-    
-  material_sample_t mat;
-  mat.reflectance = ev.reflectance;
-  mat.pdf = ev.pdf;
-  return mat;
-}
-
-void material_sample(trace_output_t trace, vec3 towards_light, vec3 towards_viewer, float ior1, float ior2, out material_sample_t material)
-{
-  material = sample_material_proto(trace.material_index, trace.uv,
-    trace.normal, trace.point, towards_light, towards_viewer, ior1, ior2);
-}
+#define _G(P) materials_data[P]
+#define _MTY(I) materials[I].id
+#define _MBO(I) materials[I].offset
+#include "material.glsl"
+#undef _G
+#undef _MTY
+#undef _MBO
 
 void main() {
   uint id = gl_GlobalInvocationID.x;
@@ -183,8 +152,11 @@ void main() {
   {
     if(trace.intersects == 2) // hit light
     {
-      li = true;
-      accumulate_color(vec4(unpackUnorm4x8(trace.light_color).rgb * trace.light_strength * gen.reflectance, 0) + gen.color, ivec2(pixel));
+      trace.intersects = 0;
+      if(bounce_index == 0)
+        accumulate_color(vec4((unpackUnorm4x8(trace.light_color).rgb * trace.light_strength), 1), ivec2(pixel));
+      else
+        accumulate_color(vec4((unpackUnorm4x8(trace.light_color).rgb * trace.light_strength * gen.reflectance + gen.color.rgb), 1), ivec2(pixel));
       return;
     }
 
@@ -192,19 +164,15 @@ void main() {
     float rx = random_value(int(int(56128966 * gen.random_value) + 20945293*id));
     float ry = random_value(int(int(12233432 * gen.random_value) + 74867839*id));
     
-    bool is_incoming = dot(trace.normal, gen.direction) < 0;
-    trace.normal = is_incoming ? trace.normal : -trace.normal;
-
-    float ior_front = is_incoming ? 1.0 : 1.5;
-    float ior_back = is_incoming ? 1.5 : 1.0;
+    material_load(trace.material_index);
 
     vec2 material_randoms = vec2(random_next(), random_next());
-    vec3 generated = material_continue_ray(trace, material_randoms, -gen.direction, trace.normal, ior_front, ior_back);
+    vec3 generated = material_continue_ray(material_randoms, -gen.direction, trace.normal);
 
     material_sample_t material;
-    material_sample(trace, generated, -gen.direction, ior_front, ior_back, material);
+    material_sample(trace.point, trace.uv, trace.normal, generated, -gen.direction, material.reflectance, material.pdf);
 
-    if(force_write_color || material.pdf < 1e-3 || isnan(material.pdf) || isinf(material.pdf) || 
+    if(force_write_color || material.pdf < 1e-6 || isnan(material.pdf) || isinf(material.pdf) || 
       any(isnan(material.reflectance)) || any(isinf(material.reflectance)) || 
       any(isnan(generated)) || any(isinf(generated)))
     {
@@ -218,35 +186,36 @@ void main() {
     if(trace.light_strength > 0)
     {
       material_sample_t light_material;
-      material_sample(trace, trace.light_direction, -gen.direction, ior_front, ior_back, light_material);
+      material_sample(trace.point, trace.uv, trace.normal, trace.light_direction, -gen.direction, light_material.reflectance, light_material.pdf);
       
       gen.color += vec4(unpackUnorm4x8(trace.light_color).rgb * trace.light_strength * light_material.reflectance * gen.reflectance, 0);
     }
-    else
-    {
-      float bias = 5;
-      // trace a ray roughly towards the light...
-      vec3 light_caster = mix(trace.light_direction, generated, 1/(1+bias));
-      light_caster = normalize(light_caster);
-      
-      material_sample_t light_material2;
-      material_sample(trace, light_caster, -gen.direction, ior_front, ior_back, light_material2);
 
-      if(light_material2.pdf > random_next() / bias)
-      {
-        generated = light_caster;
-        float p = material.pdf;
-        material = light_material2;
-        material.reflectance /= bias;
-        material.pdf = bias * light_material2.pdf;
-      }
-    }
+//    {
+//      float bias = 3;
+//      // trace a ray roughly towards the light...
+//      vec3 light_caster = generated;
+//      light_caster = normalize(light_caster);
+//      
+//      material_sample_t light_material2;
+//      material_sample(trace.point, trace.uv, trace.normal, light_caster, -gen.direction, light_material2.reflectance, light_material2.pdf);
+//
+//      if(light_material2.pdf > 5*random_next())
+//      {
+//        generated = light_caster;
+//        float p = material.pdf;
+//        material = light_material2;
+//        material.pdf = light_material2.pdf;
+//      }
+//    }
 
+    vec3 ld = -gen.direction;
+    vec3 hd = trace.normal;
     gen.direction = generated;
     
     gen.origin = trace.point + 1e-3 * gen.direction;
     gen.pdf *= material.pdf;
-    gen.reflectance *= material.reflectance * abs(dot(generated, trace.normal)) / material.pdf;
+    gen.reflectance *= material.reflectance * abs(dot(generated, hd)) / material.pdf;
     gen.random_value = random_value(int(int(2341335623 * gen.random_value) + 357883444*id));
     generate_output[id] = gen;
   }

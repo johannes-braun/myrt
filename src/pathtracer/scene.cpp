@@ -1,5 +1,6 @@
 #include "scene.hpp"
 #include <algorithm>
+#include "material.hpp"
 
 namespace myrt
 {
@@ -13,7 +14,9 @@ namespace myrt
 
   struct material_t
   {
-    int index = 0;
+    int index;
+    parameter_buffer_description buffer_description;
+    std::shared_ptr<material> material;
   };
 
   struct sdf_t {
@@ -44,7 +47,8 @@ namespace myrt
     }
   }
 
-  scene::geometry_pointer scene::push_geometry(std::span<index_type const> indices, std::span<point_type const> points, std::span<point_type const> normals) {
+  scene::geometry_pointer scene::push_geometry(std::span<index_type const> indices, std::span<point_type const> points, std::span<point_type const> normals,
+    std::span<uv_type const> uvs) {
     geometry_info_t info{
         .bvh_node_base_index = static_cast<index_type>(m_bvh_nodes.size()),
         .bvh_index_base_index = static_cast<index_type>(m_bvh_indices.size()),
@@ -55,6 +59,12 @@ namespace myrt
     m_indices.insert(m_indices.end(), indices.begin(), indices.end());
     m_vertices.insert(m_vertices.end(), points.begin(), points.end());
     m_normals.insert(m_normals.end(), normals.begin(), normals.end());
+
+    if (uvs.size() == points.size())
+      m_uvs.insert(m_uvs.end(), uvs.begin(), uvs.end());
+    else
+      m_uvs.resize(m_uvs.size() + points.size());
+
     const auto aabbs = generate_triangle_bounds(indices, points);
 
     bvh& b = *m_object_bvhs.emplace_back(std::make_unique<bvh>(aabbs, split_aabbs));
@@ -73,27 +83,27 @@ namespace myrt
       erase_geometry_direct(ptr);
       });
   }
-  material_info_t scene::info_of(material_pointer const& material) const
+  std::shared_ptr<material_type> scene::type_of(material_pointer const& material) const
   {
-    return m_material_infos.at(material->index);
+    return material->material->type();
   }
-  void scene::update_material(material_pointer const& material, const material_info_t& info)
+  /*void scene::update_material(material_pointer const& material, const material_info_t& info)
   {
     m_material_infos.at(material->index) = info;
     m_materials_changed = true;
-  }
-  void scene::set_material_parameter(const sdf_pointer& sdf, std::shared_ptr<sdf::int_param> const& parameter, material_pointer material)
+  }*/
+  /*void scene::set_material_parameter(const sdf_pointer& sdf, std::shared_ptr<int_param> const& parameter, material_pointer material)
   {
     m_sdf_buffer_changed = true;
-    sdf->assembly.set_value(m_sdf_parameter_buffer.data(), parameter, material->index);
+    sdf->assembly.buffer_description.set_value(m_sdf_parameter_buffer.data(), parameter, material->index);
   }
   void scene::erase_material_indirect(const material_pointer& material) {
     m_erase_on_prepare_materials.push_back(material);
-  }
+  }*/
   void scene::erase_geometry_indirect(const geometry_pointer& geometry) {
     m_erase_on_prepare.push_back(geometry);
   }
-  void scene::erase_material_direct(const material_pointer& material) {
+ /* void scene::erase_material_direct(const material_pointer& material) {
     m_materials_changed = true;
 
     auto iter = std::find(m_available_materials.begin(), m_available_materials.end(), material);
@@ -110,12 +120,12 @@ namespace myrt
       std::iter_swap(iter, std::prev(m_available_materials.end()));
       m_available_materials.pop_back();
     }
-  }
+  }*/
 
-  void scene::set_parameter(const sdf_pointer& sdf, std::shared_ptr<sdf::parameter> const& parameter, float* value_ptr)
+  void scene::set_parameter(const sdf_pointer& sdf, std::shared_ptr<parameter> const& parameter, float* value_ptr)
   {
     m_sdf_buffer_changed = true;
-    sdf->assembly.set_value(m_sdf_parameter_buffer.data(), parameter, value_ptr);
+    sdf->assembly.buffer_description.set_value(m_sdf_parameter_buffer.data(), parameter, value_ptr);
   }
   void scene::erase_geometry_direct(const geometry_pointer& geometry)
   {
@@ -151,6 +161,8 @@ namespace myrt
         m_vertices.erase(m_vertices.begin() + info.points_base_index, m_vertices.begin() + ponts_end);
       if (!m_normals.empty())
         m_normals.erase(m_normals.begin() + info.points_base_index, m_normals.begin() + ponts_end);
+      if (!m_uvs.empty())
+        m_uvs.erase(m_uvs.begin() + info.points_base_index, m_uvs.begin() + ponts_end);
 
       std::for_each(iter, m_available_geometries.end(), [&](const geometry_pointer& ptr) {
         ptr->info.bvh_index_base_index -= bvh_index_end - info.bvh_index_base_index;
@@ -163,16 +175,44 @@ namespace myrt
       m_drawables.clear();
     }
   }
-  scene::material_pointer scene::push_material(material_info_t info)
+  scene::material_pointer scene::push_material(std::shared_ptr<material> type)
   {
     m_materials_changed = true;
+    m_materials_buffer_changed = true;
+    
+    
     auto const& ptr = m_available_materials.emplace_back(std::make_unique<material_t>());
-    ptr->index = static_cast<int>(m_material_infos.size());
-    m_material_infos.push_back(std::move(info));
+    ptr->index = static_cast<int>(m_material_references.size());
+    ptr->buffer_description = m_material_assembler.append(type);
+    ptr->buffer_description.base_offset = 0;
+    //ptr->buffer_description.base_offset += static_cast<int>(m_material_parameter_buffer.size());
+    ptr->material = type;
+    m_material_references.push_back(material_reference_t{
+      .id = ptr->buffer_description.id,
+      .offset = ptr->buffer_description.base_offset
+      });
+    m_material_parameter_buffer.resize(m_material_parameter_buffer.size() + ptr->buffer_description.blocks_required);
+    ptr->buffer_description.apply_defaults(m_material_parameter_buffer);
+    //m_material_infos.push_back(std::move(info));
 
     return std::shared_ptr<material_t>(ptr.get(), [this, ptr](material_t*) mutable {
-      erase_material_direct(ptr);
+      // todo...
+
       });
+  }
+  std::shared_ptr<parameter> scene::get_parameter(const material_pointer& material, std::string const& name) const
+  {
+    if (auto const it = material->material->parameters().find(name); it != material->material->parameters().end())
+      return it->second;
+    return nullptr;
+  }
+  parameter_buffer_description& scene::get_material_assembly(material_pointer const& mat)
+  {
+    return mat->buffer_description;
+  }
+  parameter_buffer_description const& scene::get_material_assembly(material_pointer const& mat) const
+  {
+    return mat->buffer_description;
   }
 
   scene::sdf_pointer scene::push_sdf(sdf_info_t info)
@@ -187,7 +227,7 @@ namespace myrt
     ptr->scene = this;
     ptr->assembly = std::move(assembly);
     ptr->buffer_offset = m_sdf_parameter_buffer.size();
-    m_sdf_parameter_buffer.resize(m_sdf_parameter_buffer.size() + ptr->assembly.buffer_blocks_required);
+    m_sdf_parameter_buffer.resize(m_sdf_parameter_buffer.size() + ptr->assembly.buffer_description.blocks_required);
     ptr->assembly.initialize_from_default(m_sdf_parameter_buffer.data(), ptr->info.root);
 
     return ptr;
@@ -206,10 +246,10 @@ namespace myrt
   scene::scene() {
     glCreateBuffers(number_of_buffers, reinterpret_cast<GLuint*>(&m_scene_buffers));
 
-    m_default_material = push_material(material_info_t{
+   /* m_default_material = push_material(material_info_t{
         .albedo_rgba = rnu::vec4ui8(255, 0, 255, 255),
         .ior = 1.0
-      });
+      });*/
   }
   const scene::material_pointer& scene::default_material() const
   {
@@ -343,8 +383,14 @@ namespace myrt
     if (m_materials_changed)
     {
       m_materials_changed = false;
-      fill_buffer(m_scene_buffers.materials_buffer, m_material_infos);
+      fill_buffer(m_scene_buffers.materials_buffer, m_material_references);
       result.materials_changed = true;
+    }
+    if (m_materials_buffer_changed)
+    {
+      m_materials_buffer_changed = false;
+      fill_buffer(m_scene_buffers.materials_data_buffer, m_material_parameter_buffer);
+      result.materials_buffer_changed = true;
     }
     if (m_geometries_changed)
     {
@@ -352,12 +398,13 @@ namespace myrt
       fill_buffer(m_scene_buffers.indices_buffer, m_indices);
       fill_buffer(m_scene_buffers.vertices_buffer, m_vertices);
       fill_buffer(m_scene_buffers.normals_buffer, m_normals);
+      fill_buffer(m_scene_buffers.uvs_buffer, m_uvs);
       fill_buffer(m_scene_buffers.bvh_nodes_buffer, m_bvh_nodes);
       fill_buffer(m_scene_buffers.bvh_indices_buffer, m_bvh_indices);
       result.geometries_changed = true;
     }
-    if (!m_erase_on_prepare.empty() || !m_erase_on_prepare_materials.empty())
-      printf("Erasing %d geometries and %d materials...\n", int(m_erase_on_prepare.size()), int(m_erase_on_prepare_materials.size()));
+    if (!m_erase_on_prepare.empty()/* || !m_erase_on_prepare_materials.empty()*/)
+      printf("Erasing %d geometries...\n", int(m_erase_on_prepare.size())/*, int(m_erase_on_prepare_materials.size())*/);
     if (!m_erase_on_prepare.empty()) {
       for (auto& to_erase : m_erase_on_prepare)
       {
@@ -367,7 +414,7 @@ namespace myrt
       m_erase_on_prepare.clear();
       m_last_drawable_hash = 0;
     }
-    if (!m_erase_on_prepare_materials.empty()) {
+   /* if (!m_erase_on_prepare_materials.empty()) {
       for (auto& to_erase : m_erase_on_prepare_materials)
       {
         erase_material_direct(to_erase);
@@ -375,7 +422,7 @@ namespace myrt
       }
       m_erase_on_prepare_materials.clear();
       m_last_drawable_hash = 0;
-    }
+    }*/
     if (m_sdfs_changed || m_sdf_buffer_changed)
     {
       fill_buffer(m_scene_buffers.sdf_data_buffer, m_sdf_parameter_buffer);

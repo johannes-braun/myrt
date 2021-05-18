@@ -9,6 +9,7 @@
 #include "glad/glad.h"
 #include <experimental/generator>
 #include "sdf.hpp"
+#include "material.hpp"
 
 namespace myrt
 {
@@ -28,7 +29,7 @@ namespace myrt
     std::shared_ptr<sdf::instruction> root;
   };
 
-  struct material_info_t
+ /* struct material_info_t
   {
     rnu::vec4ui8 albedo_rgba = rnu::vec4ui8(255, 255, 255, 255);
     rnu::vec4ui8 alt_color_rgba = rnu::vec4ui8(255, 255, 255, 255);
@@ -40,7 +41,7 @@ namespace myrt
     int has_albedo_texture = false;
     std::uint64_t albedo_texture = 0;
     int bbb[2];
-  };
+  };*/
 
   struct geometry_t;
   struct material_t;
@@ -66,7 +67,7 @@ namespace myrt
     bool show = true;
 
     template<typename T>
-    void set(std::shared_ptr<sdf::parameter> const& parameter, T&& value);
+    void set(std::shared_ptr<parameter> const& parameter, T&& value);
     void enqueue() const;
 
   private:
@@ -82,10 +83,12 @@ namespace myrt
       GLuint indices_buffer = 0;
       GLuint vertices_buffer = 0;
       GLuint normals_buffer = 0;
+      GLuint uvs_buffer = 0;
       GLuint bvh_nodes_buffer = 0;
       GLuint bvh_indices_buffer = 0;
       GLuint drawable_buffer = 0;
       GLuint materials_buffer = 0;
+      GLuint materials_data_buffer = 0;
       GLuint sdf_data_buffer = 0;
       GLuint sdf_drawable_buffer = 0;
       GLuint global_bvh_nodes_buffer = 0;
@@ -100,6 +103,7 @@ namespace myrt
     struct prepare_result_t
     {
       bool materials_changed = false;
+      bool materials_buffer_changed = false;
       bool geometries_changed = false;
       bool drawables_changed = false;
       bool sdfs_changed = false;
@@ -108,15 +112,17 @@ namespace myrt
 
     using index_type = detail::default_index_type;
     using point_type = detail::default_point_type;
+    using uv_type = rnu::vec2;
 
     scene();
     ~scene();
     [[nodiscard]] geometry_pointer push_geometry(
       std::span<index_type const> indices,
       std::span<point_type const> points,
-      std::span<point_type const> normals
+      std::span<point_type const> normals,
+      std::span<uv_type const> uvs
     );
-    [[nodiscard]] material_pointer push_material(material_info_t info);
+    [[nodiscard]] material_pointer push_material(std::shared_ptr<material> type);
     [[nodiscard]] sdf_pointer push_sdf(sdf_info_t info);
 
     void enqueue(geometry_t const* geometry, material_t const* material, rnu::mat4 const& transformation);
@@ -125,17 +131,28 @@ namespace myrt
     void enqueue(sdf_t const* geometry, rnu::mat4 const& transformation);
     void enqueue(const sdf_pointer& geometry, rnu::mat4 const& transformation);
 
-    [[nodiscard]] material_info_t info_of(material_pointer const& material) const;
-    void update_material(material_pointer const& material, const material_info_t& info);
+    [[nodiscard]] std::shared_ptr<material_type> type_of(material_pointer const& material) const;
 
-    void set_material_parameter(const sdf_pointer& sdf, std::shared_ptr<sdf::int_param> const& parameter, material_pointer material);
+    //void set_material_parameter(const sdf_pointer& sdf, std::shared_ptr<int_param> const& parameter, material_pointer material);
 
     template<typename T>
-    void set_parameter(const sdf_pointer& sdf, std::shared_ptr<sdf::parameter> const& parameter, T&& value);
+    void set_parameter(const sdf_pointer& sdf, std::shared_ptr<parameter> const& parameter, T&& value);
     template<typename T>
-    void set_parameter(const sdf_t* sdf, std::shared_ptr<sdf::parameter> const& parameter, T&& value);
+    void set_parameter(const sdf_t* sdf, std::shared_ptr<parameter> const& parameter, T&& value);
 
-    void set_parameter(const sdf_pointer& sdf, std::shared_ptr<sdf::parameter> const& parameter, float* value_ptr);
+    void set_parameter(const sdf_pointer& sdf, std::shared_ptr<parameter> const& parameter, float* value_ptr);
+
+    template<typename T>
+    void set_parameter(const material_pointer& material, std::shared_ptr<parameter> const& parameter_name, T&& value);
+
+    template<typename T>
+    void set_parameter(const material_pointer& material, std::string const& name, T&& value);
+
+    template<typename T>
+    T get_parameter_value(const material_pointer& material, std::shared_ptr<parameter> const& param);
+    template<typename T>
+    T get_parameter_value(const material_pointer& material, std::string const& name);
+    std::shared_ptr<parameter> get_parameter(const material_pointer& material, std::string const& name) const;
 
     struct hit {
       size_t index;
@@ -151,6 +168,9 @@ namespace myrt
     sdf::glsl_assembler const& get_sdf_assembler() {
       return m_sdf_assembler;
     }
+    material_glsl_assembler const& get_material_assembler() {
+      return m_material_assembler;
+    }
 
     prepare_result_t prepare();
 
@@ -159,11 +179,13 @@ namespace myrt
   private:
     sdf::glsl_assembly& get_sdf_assembly(sdf_t* sdf);
     sdf::glsl_assembly const& get_sdf_assembly(const sdf_t* sdf);
+    parameter_buffer_description& get_material_assembly(material_pointer const& mat);
+    parameter_buffer_description const& get_material_assembly(material_pointer const& mat) const;
 
     void erase_geometry_direct(const geometry_pointer& geometry);
     void erase_geometry_indirect(const geometry_pointer& geometry);
-    void erase_material_direct(const material_pointer& material);
-    void erase_material_indirect(const material_pointer& material);
+    /*void erase_material_direct(const material_pointer& material);
+    void erase_material_indirect(const material_pointer& material);*/
 
     struct drawable_geometry_t
     {
@@ -180,6 +202,11 @@ namespace myrt
       rnu::mat4 inverse_transformation;
       int sdf_index;
       int pad[3];
+    };
+    struct material_reference_t
+    {
+      int id;
+      int offset;
     };
     struct aligned_point_t
     {
@@ -202,40 +229,69 @@ namespace myrt
     std::vector<sdf_pointer> m_available_sdfs;
     std::vector<std::unique_ptr<bvh>> m_object_bvhs;
     std::vector<geometry_pointer> m_erase_on_prepare;
-    std::vector<material_pointer> m_erase_on_prepare_materials;
+    //std::vector<material_pointer> m_erase_on_prepare_materials;
 
     std::vector<index_type> m_indices;
     std::vector<aligned_point_t> m_vertices;
     std::vector<aligned_point_t> m_normals;
+    std::vector<uv_type> m_uvs;
     std::vector<aligned_node_t> m_bvh_nodes;
     std::vector<index_type> m_bvh_indices;
-    std::vector<material_info_t> m_material_infos;
     std::vector<float> m_sdf_parameter_buffer;
+    std::vector<float> m_material_parameter_buffer;
+    std::vector<material_reference_t> m_material_references;
     std::vector<drawable_sdf_t> m_sdf_drawables;
 
+    material_glsl_assembler m_material_assembler;
     sdf::glsl_assembler m_sdf_assembler;
     std::unique_ptr<bvh> m_global_bvh;
     material_pointer m_default_material;
     bool m_materials_changed = false;
+    bool m_materials_buffer_changed = false;
     bool m_geometries_changed = false;
     bool m_sdfs_changed = false;
     bool m_sdf_buffer_changed = false;
   };
 
   template<typename T>
-  inline void scene::set_parameter(const sdf_pointer& sdf, std::shared_ptr<sdf::parameter> const& parameter, T&& value)
+  inline void scene::set_parameter(const sdf_pointer& sdf, std::shared_ptr<parameter> const& parameter, T&& value)
   {
     set_parameter(sdf.get(), parameter, std::forward<T>(value));
   }
   template<typename T>
-  inline void scene::set_parameter(const sdf_t* sdf, std::shared_ptr<sdf::parameter> const& parameter, T&& value)
+  inline void scene::set_parameter(const sdf_t* sdf, std::shared_ptr<parameter> const& parameter, T&& value)
   {
     m_sdf_buffer_changed = true;
-    get_sdf_assembly(sdf).set_value(m_sdf_parameter_buffer.data(), parameter, std::forward<T>(value));
+    get_sdf_assembly(sdf).buffer_description.set_value(m_sdf_parameter_buffer.data(), parameter, std::forward<T>(value));
   }
 
   template<typename T>
-  void sdf_object::set(std::shared_ptr<detail::sdf_parameter> const& parameter, T&& value)
+  void scene::set_parameter(const material_pointer& material, std::shared_ptr<parameter> const& parameter, T&& value)
+  {
+    get_material_assembly(material).set_value(m_material_parameter_buffer.data(), parameter, std::forward<T>(value));
+    m_materials_buffer_changed = true;
+  }
+
+  template<typename T>
+  void scene::set_parameter(const material_pointer& material, std::string const& name, T&& value)
+  {
+    set_parameter(material, get_parameter(material, name), std::forward<T>(value));
+  }
+
+  template<typename T>
+  inline T scene::get_parameter_value(const material_pointer& material, std::shared_ptr<parameter> const& param)
+  {
+    return get_material_assembly(material).get_value<T>(m_material_parameter_buffer.data(), param);
+  }
+
+  template<typename T>
+  inline T scene::get_parameter_value(const material_pointer& material, std::string const& name)
+  {
+    return get_parameter_value<T>(material, get_parameter(material, name));
+  }
+
+  template<typename T>
+  void sdf_object::set(std::shared_ptr<parameter> const& parameter, T&& value)
   {
     get_scene()->set_parameter(sdf, parameter, std::forward<T>(value));
   }

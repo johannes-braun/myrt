@@ -6,6 +6,20 @@
 #include "scene.hpp"
 
 namespace myrt {
+  enum class shader_flags : std::uint8_t
+  {
+    none = 0,
+    generate = 1,
+    trace = 2,
+    color = 4,
+    filter = 8,
+    all = 0xff
+  };
+
+  constexpr shader_flags operator|(shader_flags lhs, shader_flags rhs) { return shader_flags(std::uint8_t(lhs) | std::uint8_t(rhs)); }
+  constexpr shader_flags operator&(shader_flags lhs, shader_flags rhs) { return shader_flags(std::uint8_t(lhs) & std::uint8_t(rhs)); }
+  constexpr shader_flags operator^(shader_flags lhs, shader_flags rhs) { return shader_flags(std::uint8_t(lhs) ^ std::uint8_t(rhs)); }
+
   class sequential_pathtracer {
   public:
     static constexpr std::uint32_t linear_group_size = 64;
@@ -23,6 +37,8 @@ namespace myrt {
 
     std::uint32_t sample_count() const;
 
+    void invalidate_shaders();
+    void invalidate_shader(shader_flags which);
     void invalidate_texture();
     void invalidate_counter();
 
@@ -146,6 +162,7 @@ namespace myrt {
       GLint bvh;
       GLint bvh_indices;
       GLint mesh_indices;
+      GLint mesh_uvs;
       GLint mesh_points;
       GLint mesh_normals;
       GLint mesh_geometries;
@@ -170,6 +187,8 @@ namespace myrt {
     } m_ray_filter_bindings;
 
     struct {
+      GLint materials;
+      GLint material_data;
       GLint access_control;
       GLint generate_output;
       GLint trace_output;

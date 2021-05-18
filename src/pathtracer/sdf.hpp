@@ -8,114 +8,14 @@
 #include <iomanip>
 #include <algorithm>
 
+#include "parameter.hpp"
+#include "utils.hpp"
+
 namespace myrt
 {
   namespace detail {
-    struct sdf_parameter_type
-    {
-      sdf_parameter_type(std::string type_name, int buffer_blocks, std::string buffer_load)
-        : type_name(type_name), buffer_blocks(buffer_blocks) {
-        function = type_name + " _r" + type_name + "(";
-        for (int i = 0; i < buffer_blocks; ++i)
-        {
-          if (i != 0)
-            function += ",";
-          function += "float in_block" + std::to_string(i);
-        }
-        function += "){" + buffer_load + "\n;}";
-      }
-
-      std::string type_name;
-      int buffer_blocks;
-      std::string function;
-    };
-
-    struct sdf_parameter;
-    struct sdf_parameter_link {
-      enum class type {
-        link,
-        offset
-      };
-
-      bool is_linked() const {
-        return other != nullptr;
-      }
-
-      size_t hash() const;
-
-      std::shared_ptr<sdf_parameter> other;
-      size_t block;
-    };
-
-    struct sdf_parameter {
-      sdf_parameter(std::shared_ptr<sdf_parameter_type> type)
-        : type(std::move(type)) {
-        _value_links.resize(this->type->buffer_blocks);
-        _default_value.resize(this->type->buffer_blocks);
-      }
-
-      sdf_parameter_link link_value_block(size_t block, std::shared_ptr<sdf_parameter> other, size_t other_block) {
-        sdf_parameter_link last = _value_links[block];
-        _value_links[block].other = std::move(other);
-        _value_links[block].block = other_block;
-        return last;
-      }
-
-      sdf_parameter_link unlink_value_block(size_t block) {
-        sdf_parameter_link last = _value_links[block];
-        _value_links[block].other.reset();
-        _value_links[block].block = 0;
-        return last;
-      }
-
-      sdf_parameter_link const& get_link(size_t block) const {
-        return _value_links[block];
-      }
-
-      std::vector<float> const& get_default_value() const {
-        return _default_value;
-      }
-      void set_default_value(std::span<float const> data) {
-        if (data.size() != type->buffer_blocks)
-          throw std::invalid_argument("Data size not suitable for this parameter");
-        _default_value.assign(data.begin(), data.end());
-      }
-
-      std::shared_ptr<sdf_parameter_type> type;
-    private:
-      std::vector<float> _default_value;
-      std::vector<sdf_parameter_link> _value_links;
-    };
-
-    inline size_t sdf_parameter_link::hash() const {
-      return std::hash<std::shared_ptr<sdf_parameter>>{}(other) * 37 +
-        std::hash<size_t>{}(block);
-    }
-
-    inline std::shared_ptr<sdf_parameter_type> create_parameter_type(std::string type_name, int buffer_blocks, std::string buffer_load)
-    {
-      auto const ptr = std::make_shared<sdf_parameter_type>(std::move(type_name), buffer_blocks, std::move(buffer_load));
-    }
-
-#define def_param_type(name, blk, glsl) \
-  struct name##_type :sdf_parameter_type { name##_type() :sdf_parameter_type(#name, (blk), (glsl)) {} };\
-  struct name##_param :sdf_parameter { \
-  static inline const std::shared_ptr<name##_type> type = std::make_shared<name##_type>(); \
-  name##_param() : sdf_parameter(type) {} };\
-  inline std::shared_ptr<name##_param> make_##name##_param() { return std::make_shared<name##_param>(); }
-
-    def_param_type(uint, 1, "return uint(in_block0)");
-    def_param_type(int, 1, "return int(in_block0)");
-    def_param_type(float, 1, "return in_block0");
-    def_param_type(vec2, 2, "return vec3(in_block0, in_block1)");
-    def_param_type(vec3, 3, "return vec3(in_block0, in_block1, in_block2)");
-    def_param_type(vec4, 4, "return vec4(in_block0, in_block1, in_block2, in_block3)");
-    def_param_type(mat2, 4, "return mat2(in_block0, in_block1, in_block2, in_block3)");
-    def_param_type(mat4, 16, "return mat4(in_block0, in_block1, in_block2, in_block3, in_block0, in_block1, in_block2, in_block3, in_block0, in_block1, in_block2, in_block3, in_block0, in_block1, in_block2, in_block3)");
-#undef def_param_type
-
-    template<typename... PType> requires (std::convertible_to<std::decay_t<PType>, std::shared_ptr<sdf_parameter>> && ...)
-      std::array<std::shared_ptr<sdf_parameter>, sizeof...(PType)> plist(PType&&... params) {
+    template<typename... PType> requires (std::convertible_to<std::decay_t<PType>, std::shared_ptr<parameter>> && ...)
+      std::array<std::shared_ptr<parameter>, sizeof...(PType)> plist(PType&&... params) {
       return {
         std::forward<PType>(params)...
       };
@@ -135,7 +35,7 @@ namespace myrt
 
       category instruction_category;
       std::string glsl_string;
-      std::vector<std::shared_ptr<sdf_parameter_type>> type_params;
+      std::vector<std::shared_ptr<parameter_type>> type_params;
       std::vector<std::string> param_names;
     };
 
@@ -146,7 +46,7 @@ namespace myrt
 
       }
 
-      std::vector<std::shared_ptr<sdf_parameter>> params;
+      std::vector<std::shared_ptr<parameter>> params;
       std::shared_ptr<sdf_type> type;
       std::weak_ptr<sdf_instruction> joint_element;
     };
@@ -194,7 +94,7 @@ namespace myrt
       std::shared_ptr<sdf_instruction> child;
     };
 
-    inline std::shared_ptr<sdf_type> sdf_create_type(sdf_type::category type, std::string_view glsl, std::span<std::shared_ptr<sdf_parameter_type> const> params)
+    inline std::shared_ptr<sdf_type> sdf_create_type(sdf_type::category type, std::string_view glsl, std::span<std::shared_ptr<parameter_type> const> params)
     {
       auto const mod = std::make_shared<sdf_type>();
       mod->instruction_category = type;
@@ -203,18 +103,18 @@ namespace myrt
       return mod;
     }
 
-    inline std::shared_ptr<sdf_type> sdf_create_type(sdf_type::category type, std::string_view glsl, std::initializer_list<std::shared_ptr<sdf_parameter_type>> params)
+    inline std::shared_ptr<sdf_type> sdf_create_type(sdf_type::category type, std::string_view glsl, std::initializer_list<std::shared_ptr<parameter_type>> params)
     {
-      return sdf_create_type(type, std::move(glsl), std::span<std::shared_ptr<sdf_parameter_type> const>(params));
+      return sdf_create_type(type, std::move(glsl), std::span<std::shared_ptr<parameter_type> const>(params));
     }
 
-    inline std::shared_ptr<sdf_type> sdf_create_type(sdf_type::category type, std::string_view glsl, std::shared_ptr<sdf_parameter_type> const& param)
+    inline std::shared_ptr<sdf_type> sdf_create_type(sdf_type::category type, std::string_view glsl, std::shared_ptr<parameter_type> const& param)
     {
-      return sdf_create_type(type, std::move(glsl), std::initializer_list<std::shared_ptr<sdf_parameter_type>>{ param });
+      return sdf_create_type(type, std::move(glsl), std::initializer_list<std::shared_ptr<parameter_type>>{ param });
     }
 
     template<typename T>
-    inline std::shared_ptr<T> sdf_create_instance(std::shared_ptr<sdf_type> type, std::span<std::shared_ptr<sdf_parameter> const> params) requires std::is_base_of_v<sdf_instruction, T>
+    inline std::shared_ptr<T> sdf_create_instance(std::shared_ptr<sdf_type> type, std::span<std::shared_ptr<parameter> const> params) requires std::is_base_of_v<sdf_instruction, T>
     {
       auto const mod = std::make_shared<T>(std::move(type));
       mod->params.insert(mod->params.end(), std::begin(params), std::end(params));
@@ -222,13 +122,13 @@ namespace myrt
     }
 
     template<typename T>
-    inline std::shared_ptr<T> sdf_create_instance(std::shared_ptr<sdf_type> type, std::initializer_list<std::shared_ptr<sdf_parameter>> params) requires std::is_base_of_v<sdf_instruction, T>
+    inline std::shared_ptr<T> sdf_create_instance(std::shared_ptr<sdf_type> type, std::initializer_list<std::shared_ptr<parameter>> params) requires std::is_base_of_v<sdf_instruction, T>
     {
-      return sdf_create_instance<T>(std::move(type), std::span<std::shared_ptr<sdf_parameter> const>(params));
+      return sdf_create_instance<T>(std::move(type), std::span<std::shared_ptr<parameter> const>(params));
     }
 
     template<typename T>
-    inline std::shared_ptr<T> sdf_create_instance(std::shared_ptr<sdf_type> type, std::shared_ptr<sdf_parameter> const& param) requires std::is_base_of_v<sdf_instruction, T>
+    inline std::shared_ptr<T> sdf_create_instance(std::shared_ptr<sdf_type> type, std::shared_ptr<parameter> const& param) requires std::is_base_of_v<sdf_instruction, T>
     {
       return sdf_create_instance<T>(std::move(type), { param });
     }
@@ -254,39 +154,39 @@ namespace myrt
       return sdf_create_instance<sdf_prim>(std::move(type), std::forward<ParamList>(plist));
     }
 
-    inline std::string to_hex_string(size_t hash) {
-      std::stringstream stream;
-      stream << std::hex << (std::uint32_t(hash) ^ std::uint32_t(hash >> 32));
-      return stream.str();
-    }
+    //inline std::string to_hex_string(size_t hash) {
+    //  std::stringstream stream;
+    //  stream << std::hex << (std::uint32_t(hash) ^ std::uint32_t(hash >> 32));
+    //  return stream.str();
+    //}
 
-    template<typename T>
-    inline int hash_reduced(T&& t,
-      std::unordered_map<size_t, int>& hash_reducers,
-      int& hash_counter)
-    {
-      auto const hash = std::hash<std::decay_t<T>>{}(std::forward<T>(t));
+    //template<typename T>
+    //inline int hash_reduced(T&& t,
+    //  std::unordered_map<size_t, int>& hash_reducers,
+    //  int& hash_counter)
+    //{
+    //  auto const hash = std::hash<std::decay_t<T>>{}(std::forward<T>(t));
 
-      if (auto const it = hash_reducers.find(hash); it != hash_reducers.end())
-      {
-        return it->second;
-      }
-      else
-      {
-        hash_reducers.emplace_hint(it, std::make_pair(hash, hash_counter++));
-        return hash_counter - 1;
-      }
-    }
+    //  if (auto const it = hash_reducers.find(hash); it != hash_reducers.end())
+    //  {
+    //    return it->second;
+    //  }
+    //  else
+    //  {
+    //    hash_reducers.emplace_hint(it, std::make_pair(hash, hash_counter++));
+    //    return hash_counter - 1;
+    //  }
+    //}
 
     inline std::string resolve_parameter(
-      std::shared_ptr<sdf_parameter> param,
+      std::shared_ptr<parameter> param,
 
       std::stringstream& functions,
       std::stringstream& distance_function,
       std::unordered_map<size_t, int>& hash_reducers,
       int& hash_counter,
       std::unordered_set<size_t>& used_objects,
-      std::unordered_set<sdf_parameter_type*>& used_param_types,
+      std::unordered_set<parameter_type*>& used_param_types,
       std::unordered_map<size_t, int>& buffer_offsets,
       int& current_offset)
     {
@@ -297,7 +197,7 @@ namespace myrt
 
         for (size_t i = 0; i < param->type->buffer_blocks; ++i)
         {
-          sdf_parameter_link self{ param, i };
+          parameter_link self{ param, i };
           auto const& link = param->get_link(i);
           size_t const own_hash = self.hash();
 
@@ -350,7 +250,7 @@ namespace myrt
       std::stringstream distance_function;
       std::unordered_set<size_t> used_objects;
       std::unordered_set<size_t> used_functions;
-      std::unordered_set<sdf_parameter_type*> used_param_types;
+      std::unordered_set<parameter_type*> used_param_types;
       std::unordered_map<size_t, int> hash_reducers;
       int hash_counter = 0;
       int current_offset = 0;
@@ -517,20 +417,24 @@ namespace myrt
       throw std::runtime_error("could not determinee instruction type.");
     }
 
-    inline std::string replace(std::string str, const std::string& sub1, const std::string& sub2)
-    {
-      if (sub1.empty())
-        return str;
+    //inline std::string replace(std::string str, const std::string& sub1, const std::string& sub2)
+    //{
+    //  if (sub1.empty())
+    //    return str;
 
-      std::size_t pos;
-      while ((pos = str.find(sub1)) != std::string::npos)
-        str.replace(pos, sub1.size(), sub2);
+    //  std::size_t pos;
+    //  while ((pos = str.find(sub1)) != std::string::npos)
+    //    str.replace(pos, sub1.size(), sub2);
 
-      return str;
-    }
+    //  return str;
+    //}
 
     constexpr bool is_space_or_newline(char c) {
       return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+    }
+
+    constexpr bool is_newline(char c) {
+      return c == '\n' || c == '\r';
     }
 
     constexpr bool is_operator(char c)
@@ -557,6 +461,8 @@ namespace myrt
       case '.':
       case ',':
       case ';':
+      case '?':
+      case ':':
         return true;
       }
       return false;
@@ -577,10 +483,20 @@ namespace myrt
 
       for (char c : original) {
         switch (current_state) {
+        case state::space:
+          if (!is_space_or_newline(c) && !(c == '\n' || c == '\r'))
+          {
+            current_state = state::normal;
+
+            if (alphanumeric && !is_operator(c))
+              minified.push_back(' ');
+          }
         case state::normal:
           if (is_space_or_newline(c))
             current_state = state::space;
           else if (c == '#') {
+            if (!minified.empty() && !is_newline(minified.back()))
+              minified.push_back('\n');
             current_state = state::preprocessor;
             minified.push_back(c);
           }
@@ -594,19 +510,6 @@ namespace myrt
           if (c == '\n' || c == '\r')
             current_state = state::space;
           minified.push_back(c);
-          break;
-
-        case state::space:
-          if (!is_space_or_newline(c) && !(c == '\n' || c == '\r'))
-          {
-            current_state = state::normal;
-
-            if (alphanumeric && !is_operator(c))
-              minified.push_back(' ');
-
-            alphanumeric = !is_operator(c);
-            minified.push_back(c);
-          }
           break;
         }
       }
@@ -644,13 +547,14 @@ namespace myrt
 
       struct sdf_glsl_assembly
       {
-        int id;
-        size_t buffer_blocks_required;
-        std::unordered_map<size_t, int> buffer_offsets;
+        parameter_buffer_description buffer_description;
+
+       /*size_t buffer_blocks_required;
+        std::unordered_map<size_t, int> buffer_offsets;*/
 
         void initialize_from_default(float* buf, std::shared_ptr<sdf_instruction> const& root) {
           for (size_t i = 0; i < root->params.size(); ++i)
-            set_value(buf, root->params[i], root->params[i]->get_default_value().data());
+            buffer_description.set_value(buf, root->params[i], root->params[i]->get_default_value().data());
 
           switch (root->type->instruction_category)
           {
@@ -678,13 +582,13 @@ namespace myrt
             break;
           }
           }
-        }
+        }/*
 
-        void set_value(float* buffer, std::shared_ptr<sdf_parameter> const& param, float const* data) const {
+        void set_value(float* buffer, std::shared_ptr<parameter> const& param, float const* data) const {
           param->set_default_value(std::span<float const>(data, param->type->buffer_blocks));
           for (size_t i = 0; buffer && i < param->type->buffer_blocks; ++i)
           {
-            sdf_parameter_link self{ param, i };
+            parameter_link self{ param, i };
             auto const& link = param->get_link(i);
             if (!link.is_linked())
             {
@@ -696,34 +600,34 @@ namespace myrt
           }
         }
 
-        void set_value(float* buffer, std::shared_ptr<sdf_parameter> const& param, int data) const {
+        void set_value(float* buffer, std::shared_ptr<parameter> const& param, int data) const {
           float cast = float(data);
           set_value(buffer, param, &cast);
         }
-        void set_value(float* buffer, std::shared_ptr<sdf_parameter> const& param, unsigned data) const {
+        void set_value(float* buffer, std::shared_ptr<parameter> const& param, unsigned data) const {
           float cast = float(data);
           set_value(buffer, param, &cast);
         }
-        void set_value(float* buffer, std::shared_ptr<sdf_parameter> const& param, float data) const {
+        void set_value(float* buffer, std::shared_ptr<parameter> const& param, float data) const {
           set_value(buffer, param, &data);
         }
-        void set_value(float* buffer, std::shared_ptr<sdf_parameter> const& param, rnu::vec2 data) const {
+        void set_value(float* buffer, std::shared_ptr<parameter> const& param, rnu::vec2 data) const {
           set_value(buffer, param, data.data());
         }
-        void set_value(float* buffer, std::shared_ptr<sdf_parameter> const& param, rnu::vec3 data) const {
+        void set_value(float* buffer, std::shared_ptr<parameter> const& param, rnu::vec3 data) const {
           set_value(buffer, param, data.data());
         }
-        void set_value(float* buffer, std::shared_ptr<sdf_parameter> const& param, rnu::vec4 data) const {
+        void set_value(float* buffer, std::shared_ptr<parameter> const& param, rnu::vec4 data) const {
           set_value(buffer, param, data.data());
         }
-        void set_value(float* buffer, std::shared_ptr<sdf_parameter> const& param, rnu::mat2 data) const {
+        void set_value(float* buffer, std::shared_ptr<parameter> const& param, rnu::mat2 data) const {
           set_value(buffer, param, data.data());
         }
-        void set_value(float* buffer, std::shared_ptr<sdf_parameter> const& param, rnu::mat4 data) const {
+        void set_value(float* buffer, std::shared_ptr<parameter> const& param, rnu::mat4 data) const {
           set_value(buffer, param, data.data());
         }
 
-        void get_link_value(float* buffer, sdf_parameter_link const& self, float* data) const {
+        void get_link_value(float* buffer, parameter_link const& self, float* data) const {
           auto const& link = self.other->get_link(self.block);
           if (!link.is_linked())
           {
@@ -738,7 +642,7 @@ namespace myrt
           }
         }
 
-        void get_value(float* buffer, std::shared_ptr<sdf_parameter> const& param, float* data) const {
+        void get_value(float* buffer, std::shared_ptr<parameter> const& param, float* data) const {
           if (!buffer)
           {
             std::copy(param->get_default_value().begin(), param->get_default_value().end(), data);
@@ -746,46 +650,46 @@ namespace myrt
           }
           for (size_t i = 0; i < param->type->buffer_blocks; ++i)
           {
-            sdf_parameter_link self{ param, i };
+            parameter_link self{ param, i };
             get_link_value(buffer, self, data + i);
           }
         }
 
-        void get_value(float* buffer, std::shared_ptr<sdf_parameter> const& param, int& data) const {
+        void get_value(float* buffer, std::shared_ptr<parameter> const& param, int& data) const {
           float cast = float(data);
           get_value(buffer, param, &cast);
           data = int(cast);
         }
-        void get_value(float* buffer, std::shared_ptr<sdf_parameter> const& param, unsigned& data) const {
+        void get_value(float* buffer, std::shared_ptr<parameter> const& param, unsigned& data) const {
           float cast = float(data);
           get_value(buffer, param, &cast);
           data = unsigned(cast);
         }
-        void get_value(float* buffer, std::shared_ptr<sdf_parameter> const& param, float& data) const {
+        void get_value(float* buffer, std::shared_ptr<parameter> const& param, float& data) const {
           get_value(buffer, param, &data);
         }
-        void get_value(float* buffer, std::shared_ptr<sdf_parameter> const& param, rnu::vec2& data) const {
+        void get_value(float* buffer, std::shared_ptr<parameter> const& param, rnu::vec2& data) const {
           get_value(buffer, param, data.data());
         }
-        void get_value(float* buffer, std::shared_ptr<sdf_parameter> const& param, rnu::vec3& data) const {
+        void get_value(float* buffer, std::shared_ptr<parameter> const& param, rnu::vec3& data) const {
           get_value(buffer, param, data.data());
         }
-        void get_value(float* buffer, std::shared_ptr<sdf_parameter> const& param, rnu::vec4& data) const {
+        void get_value(float* buffer, std::shared_ptr<parameter> const& param, rnu::vec4& data) const {
           get_value(buffer, param, data.data());
         }
-        void get_value(float* buffer, std::shared_ptr<sdf_parameter> const& param, rnu::mat2& data) const {
+        void get_value(float* buffer, std::shared_ptr<parameter> const& param, rnu::mat2& data) const {
           get_value(buffer, param, data.data());
         }
-        void get_value(float* buffer, std::shared_ptr<sdf_parameter> const& param, rnu::mat4& data) const {
+        void get_value(float* buffer, std::shared_ptr<parameter> const& param, rnu::mat4& data) const {
           get_value(buffer, param, data.data());
         }
 
         template<typename T, typename Param>
-        T get_value(float* buffer, std::shared_ptr<Param> const& param) const requires std::is_base_of_v<sdf_parameter, Param>{
+        T get_value(float* buffer, std::shared_ptr<Param> const& param) const requires std::is_base_of_v<parameter, Param>{
           T value;
           get_value(buffer, param, value);
           return value;
-        }
+        }*/
       };
 
       struct sdf_glsl_assembler {
@@ -797,21 +701,21 @@ namespace myrt
           size_t const offset_before = m_build_cache.current_offset;
           prepare_build_cache();
           const auto glsl_string = generate_glsl(root, m_build_cache);
-          new_assembly.buffer_offsets = std::move(m_build_cache.buffer_offsets);
-          new_assembly.id = m_current_id++;
-          new_assembly.buffer_blocks_required = m_build_cache.current_offset - offset_before;
+          new_assembly.buffer_description.buffer_offsets = std::move(m_build_cache.buffer_offsets);
+          new_assembly.buffer_description.id = m_current_id++;
+          new_assembly.buffer_description.blocks_required = m_build_cache.current_offset - offset_before;
 
           std::stringstream stream;
-          stream << "#define _SDF _SDF" << new_assembly.id << '\n';
+          stream << "#define _SDF _SDF" << new_assembly.buffer_description.id << '\n';
           stream << glsl_string << "\n#undef _SDF\n";
           m_full_glsl += stream.str();
 
-          append_map_case(new_assembly.id);
+          append_map_case(new_assembly.buffer_description.id);
           return new_assembly;
         }
 
         std::string get_assembled_glsl() const {
-          return m_full_glsl + m_map_function;
+          return "#line 0 \"myrt_gen_sdf\"\n" + m_full_glsl + m_map_function;
         }
 
       private:
@@ -845,20 +749,10 @@ namespace myrt::sdf {
   struct mod;
   using category = detail::sdf_type;
   using instruction = detail::sdf_instruction;
-  using parameter_type = detail::sdf_parameter_type;
-  using parameter = detail::sdf_parameter;
   using instruction_type = detail::sdf_type;
   using basic_primitive = detail::sdf_prim;
   using basic_operator = detail::sdf_op;
   using basic_modifier = detail::sdf_mod;
-  using detail::float_param;
-  using detail::int_param;
-  using detail::uint_param;
-  using detail::vec2_param;
-  using detail::vec3_param;
-  using detail::vec4_param;
-  using detail::mat2_param;
-  using detail::mat4_param;
   using glsl_assembly = detail::sdf_glsl_assembly;
   using glsl_assembler = detail::sdf_glsl_assembler;
 
@@ -952,7 +846,7 @@ namespace myrt::sdf {
           template<typename T>
           void set_default(std::shared_ptr<S> const& _ptr, T&& value) {
             glsl_assembly temp_asm{};
-            temp_asm.set_value(nullptr, _ptr->params[index], std::forward<T>(value));
+            temp_asm.buffer_description.set_value(nullptr, _ptr->params[index], std::forward<T>(value));
           }
         };
 

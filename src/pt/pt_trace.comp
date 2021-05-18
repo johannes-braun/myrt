@@ -1,5 +1,4 @@
 #version 460 core
-
 #extension GL_ARB_gpu_shader_int64: require
 
 const int group_size = 64;
@@ -83,6 +82,7 @@ layout(binding = 6, std430) restrict readonly buffer BVHIndices { uint bvh_indic
 layout(binding = 7, std430) restrict readonly buffer MeshIndices { uint indices[]; };
 layout(binding = 8, std430) restrict readonly buffer MeshPoints { vec4 points[]; };
 layout(binding = 9, std430) restrict readonly buffer MeshNormals { vec4 normals[]; };
+layout(binding = 13, std430) restrict readonly buffer MeshUVs { vec2 uvs[]; };
 layout(binding = 10, std430) restrict readonly buffer Geometries { drawable_geometry_t geometries[]; };
 layout(binding = 11, std430) restrict readonly buffer BVHGlobal { MYRT_BVH_NODE_STRUCT global_bvh_nodes[]; };
 layout(binding = 12, std430) restrict readonly buffer BVHIndicesGlobal { uint global_bvh_indices[]; };
@@ -137,10 +137,10 @@ void main() {
   }
 
   test_lights[0].position = 2*vec3(4, 5, 4);
-  test_lights[0].color = 120*vec3(1, 1.8, 3);
+  test_lights[0].color = 32*vec3(1, 1.8, 3);
   test_lights[0].radius = 1.5f;
   test_lights[1].position = 2*vec3(-4, 3, 5);
-  test_lights[1].color = 120*vec3(3, 1.8, 1);
+  test_lights[1].color = 32*vec3(3, 1.8, 1);
   test_lights[1].radius = 1.5f;
 
   generate_output_t base = generate_output[id];
@@ -158,12 +158,13 @@ void main() {
   point_on_light = test_lights[light_index].position + normalize(vec3(random_next(), random_next(), random_next())) * test_lights[light_index].radius * sqrt(random_next());
     
   hit_t hit = nearest_hit(base.origin, base.direction, 1.0 / 0.0);
-
+  bool no_hit = false;
   for(int l = DONT_OPTIMIZE_ZERO; l < test_lights.length(); ++l)
   {
       float t_light = intersect_sphere(base.origin, base.direction, test_lights[l].position, test_lights[l].radius);
       if(t_light > 0 && (!hit.hits||t_light < hit.t))
       {
+        no_hit = true;
         hit.hits = true;
         hit.t = t_light;
         hit.hits_light = l;
@@ -194,17 +195,21 @@ void main() {
 
     if(hit.hits_light >= 0)
     {
+      point_on_light = base.origin + hit.t * base.direction;
+      distance_to_light = distance(base.origin, point_on_light);
       result.intersects = 2;
       vec3 col = test_lights[hit.hits_light].color;
       result.light_strength = length(col);
       result.light_color = packUnorm4x8(vec4(col, 0) / result.light_strength);
+      result.light_strength *= 1.0 / (distance_to_light);
     }
-    else if(dot(direction_to_light, lnorm) > 0 && !any_hit(hit.position + direction_to_light * 0.01, direction_to_light, length(path_to_light)))
+    else if(dot(direction_to_light, lnorm) > 0 && !any_hit(hit.position + lnorm * 0.01, direction_to_light, length(path_to_light)))
     {
-      vec3 ref = test_lights[light_index].color;
-      vec3 color = ref * test_lights.length() / (1+distance_to_light * distance_to_light);
-      result.light_strength = length(color);
-      result.light_color = packUnorm4x8(vec4(color, 0) / result.light_strength);
+        vec3 ref = test_lights[light_index].color;
+        vec3 color = ref;
+        result.light_strength = length(color);
+        result.light_color = packUnorm4x8(vec4(color, 0) / result.light_strength);
+        result.light_strength *= test_lights.length() / (distance_to_light);
     }
 
     result.generated_ray = id;
@@ -373,8 +378,11 @@ hit_t nearest_hit(vec3 ray_origin, vec3 ray_direction, float max_distance)
     hit.normal = normal;
 
     hit.material_index = geometries[hit_geometry].material_index;
-
-    hit.uv = vec2(0); // todo
+    
+    vec2 u0 = uvs[base_vertex + indices[base_index + 3 * hit_triangle + 0]];
+    vec2 u1 = uvs[base_vertex + indices[base_index + 3 * hit_triangle + 1]];
+    vec2 u2 = uvs[base_vertex + indices[base_index + 3 * hit_triangle + 2]];
+    hit.uv = hit_bary.x * u1 + hit_bary.y * u2 + (1.0 - hit_bary.x - hit_bary.y) * u0;
 
     return hit;
 }

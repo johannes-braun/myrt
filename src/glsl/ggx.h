@@ -11,16 +11,19 @@ float ggx_distribution(vec3 n, vec3 h, float alpha)
   float ndotm = dot(n, h);
   float a2 = alpha * alpha;
   float den = ndotm * ndotm * (a2 - 1) + 1;
-  return a2 / (pi * den * den);
+  return ggx_chi(ndotm) * a2 / (pi * den * den);
 }
 
 float cook_torrance_geometry_1(vec3 v, vec3 n, vec3 h)
 {
-  return 2 * dot(n, h) * dot(n, v) / dot(v, h);
+  return  2 * abs(dot(n, h)) * abs(dot(n, v) / dot(v, h));
 }
 
 float ggx_geometry(const in vec3 view, const in vec3 outgoing, const in vec3 normal, const in vec3 facet_normal, float roughness)
 {
+ /* return cook_torrance_geometry_1(-view, normal, facet_normal) *
+    cook_torrance_geometry_1(outgoing, normal, facet_normal);*/
+
   return min(1, min(
     cook_torrance_geometry_1(-view, normal, facet_normal), 
     cook_torrance_geometry_1(outgoing, normal, facet_normal)));

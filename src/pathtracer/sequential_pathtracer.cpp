@@ -20,7 +20,7 @@ namespace myrt {
     GLint len;
     GLint binding = GL_INVALID_INDEX;
     glGetProgramResourceiv(program, GL_SHADER_STORAGE_BLOCK, index, 1, &prop, 1, &len, &binding);
-    
+
     if (binding == GL_INVALID_INDEX)
       return std::nullopt;
     return binding;
@@ -156,6 +156,27 @@ namespace myrt {
   {
     return m_sample_counter;
   }
+  void sequential_pathtracer::invalidate_shaders()
+  {
+    invalidate_shader(shader_flags::all);
+
+  }
+  void sequential_pathtracer::invalidate_shader(shader_flags which)
+  {
+    if ((which & shader_flags::generate) != shader_flags::none && glIsProgram(m_generate_shader)) {
+      glDeleteProgram(m_generate_shader); m_generate_shader = 0;
+    }
+    if((which & shader_flags::trace) != shader_flags::none && glIsProgram(m_trace_shader)) {
+      glDeleteProgram(m_trace_shader); m_trace_shader = 0;
+    }
+    if((which & shader_flags::color) != shader_flags::none && glIsProgram(m_color_shader)) {
+      glDeleteProgram(m_color_shader); m_color_shader = 0;
+    }
+    if((which & shader_flags::filter) != shader_flags::none && glIsProgram(m_ray_filter_shader)) {
+      glDeleteProgram(m_ray_filter_shader); m_ray_filter_shader = 0;
+    }
+    invalidate_counter();
+  }
   void sequential_pathtracer::invalidate_texture()
   {
     invalidate_counter();
@@ -290,10 +311,10 @@ namespace myrt {
 
     auto const prepare = scene.prepare();
 
-    if (prepare.drawables_changed || prepare.geometries_changed || prepare.materials_changed || prepare.sdf_buffer_changed)
+    if (prepare.drawables_changed || prepare.geometries_changed || prepare.materials_buffer_changed || prepare.sdf_buffer_changed)
       invalidate_counter();
 
-    if (prepare.sdfs_changed)
+    if (prepare.sdfs_changed || prepare.materials_changed)
     {
       glDeleteProgram(m_trace_shader);
       invalidate_counter();
@@ -320,6 +341,7 @@ namespace myrt {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_trace_bindings.mesh_indices, scene.get_scene_buffers().indices_buffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_trace_bindings.mesh_points, scene.get_scene_buffers().vertices_buffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_trace_bindings.mesh_normals, scene.get_scene_buffers().normals_buffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_trace_bindings.mesh_uvs, scene.get_scene_buffers().uvs_buffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_trace_bindings.mesh_geometries, scene.get_scene_buffers().drawable_buffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_trace_bindings.global_bvh, scene.get_scene_buffers().global_bvh_nodes_buffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_trace_bindings.global_bvh_indices, scene.get_scene_buffers().global_bvh_indices_buffer);
@@ -349,10 +371,11 @@ namespace myrt {
         glsp::definition("MYRT_BVH_NODE_TYPE_SHIFT", std::to_string(bvh_node_t::type_shift)),
         glsp::definition("MYRT_BVH_NODE_STRUCT", detail::glsl::bvh_struct_name),
         sdf_inject };
+    trace_file.expand_in_macros = true;
 
     auto const preprocessed_file = glsp::preprocess_file(trace_file);
 
-    auto const program = make_program(preprocessed_file.contents);
+    auto const program = make_program(detail::minify_glsl(preprocessed_file.contents));
     if (program) {
       if (glIsProgram(m_trace_shader))
         glDeleteProgram(m_trace_shader);
@@ -375,6 +398,7 @@ namespace myrt {
     m_trace_bindings.mesh_indices = if_empty(storage_buffer_binding(m_trace_shader, "MeshIndices"));
     m_trace_bindings.mesh_points = if_empty(storage_buffer_binding(m_trace_shader, "MeshPoints"));
     m_trace_bindings.mesh_normals = if_empty(storage_buffer_binding(m_trace_shader, "MeshNormals"));
+    m_trace_bindings.mesh_uvs = if_empty(storage_buffer_binding(m_trace_shader, "MeshUVs"));
     m_trace_bindings.mesh_geometries = if_empty(storage_buffer_binding(m_trace_shader, "Geometries"));
     m_trace_bindings.global_bvh = if_empty(storage_buffer_binding(m_trace_shader, "BVHGlobal"));
     m_trace_bindings.global_bvh_indices = if_empty(storage_buffer_binding(m_trace_shader, "BVHIndicesGlobal"));
@@ -451,6 +475,10 @@ namespace myrt {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_color_bindings.generate_output, m_generate_buffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_color_bindings.trace_output, m_trace_buffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_color_bindings.access_control, m_filter_control_buffer);
+
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_color_bindings.materials, m_last_scene->get_scene_buffers().materials_buffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_color_bindings.material_data, m_last_scene->get_scene_buffers().materials_data_buffer);
+
     glBindImageTexture(m_color_bindings.debug_texture, m_debug_texture->id(), 0, false, 0, GL_READ_WRITE, GL_RGBA32F);
     glBindImageTexture(m_color_bindings.output_image, m_color_texture->id(), 0, false, 0, GL_READ_WRITE, GL_RGBA32F);
     glUniform1i(m_color_bindings.random_sample, dist(m_rng));
@@ -471,6 +499,12 @@ namespace myrt {
   {
     glsp::preprocess_file_info color_file;
     color_file.file_path = res_dir / "../src/pt/pt_color.comp";
+    glsp::definition mat_inject;
+    mat_inject.name = "MYRT_INJECT_MATERIAL_CODE_HERE";
+    mat_inject.info.replacement = m_last_scene->get_material_assembler().get_assembled_glsl();
+    color_file.definitions = { mat_inject };
+    color_file.expand_in_macros = true;
+
     auto const preprocessed_file = glsp::preprocess_file(color_file);
 
     auto const program = make_program(preprocessed_file.contents);
@@ -487,6 +521,8 @@ namespace myrt {
     glUseProgram(m_color_shader);
     m_color_bindings.access_control = if_empty(storage_buffer_binding(m_color_shader, "AccessControl"));
     m_color_bindings.generate_output = if_empty(storage_buffer_binding(m_color_shader, "GenerateInput"));
+    m_color_bindings.materials = if_empty(storage_buffer_binding(m_color_shader, "MaterialsBuffer"));
+    m_color_bindings.material_data = if_empty(storage_buffer_binding(m_color_shader, "MaterialsDataBuffer"));
     m_color_bindings.trace_output = if_empty(storage_buffer_binding(m_color_shader, "TraceOutput"));
     m_color_bindings.debug_texture = if_empty(sampler_binding(m_color_shader, "debug_image"));
     m_color_bindings.output_image = if_empty(sampler_binding(m_color_shader, "output_image"));
