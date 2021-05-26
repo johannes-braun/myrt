@@ -13,7 +13,8 @@ struct generate_output_t {
   float pixel_y;
   vec4  color;
   float pdf;
-  float pad[3];
+  float weight;
+  float pad[2];
 };
 
 struct trace_output_t {
@@ -137,10 +138,10 @@ void main() {
   }
 
   test_lights[0].position = 2*vec3(4, 5, 4);
-  test_lights[0].color = 32*vec3(1, 1.8, 3);
+  test_lights[0].color = 12*vec3(1, 1.8, 3);
   test_lights[0].radius = 1.5f;
   test_lights[1].position = 2*vec3(-4, 3, 5);
-  test_lights[1].color = 32*vec3(3, 1.8, 1);
+  test_lights[1].color = 12*vec3(3, 1.8, 1);
   test_lights[1].radius = 1.5f;
 
   generate_output_t base = generate_output[id];
@@ -158,13 +159,12 @@ void main() {
   point_on_light = test_lights[light_index].position + normalize(vec3(random_next(), random_next(), random_next())) * test_lights[light_index].radius * sqrt(random_next());
     
   hit_t hit = nearest_hit(base.origin, base.direction, 1.0 / 0.0);
-  bool no_hit = false;
+  bool no_hit = !hit.hits;
   for(int l = DONT_OPTIMIZE_ZERO; l < test_lights.length(); ++l)
   {
       float t_light = intersect_sphere(base.origin, base.direction, test_lights[l].position, test_lights[l].radius);
       if(t_light > 0 && (!hit.hits||t_light < hit.t))
       {
-        no_hit = true;
         hit.hits = true;
         hit.t = t_light;
         hit.hits_light = l;
@@ -191,7 +191,6 @@ void main() {
     vec3 direction_to_light = normalize(path_to_light);
     float distance_to_light = length(path_to_light);
     vec3 lnorm = faceforward(hit.normal, base.direction, hit.normal);
-    result.light_direction = direction_to_light;
 
     if(hit.hits_light >= 0)
     {
@@ -201,15 +200,16 @@ void main() {
       vec3 col = test_lights[hit.hits_light].color;
       result.light_strength = length(col);
       result.light_color = packUnorm4x8(vec4(col, 0) / result.light_strength);
-      result.light_strength *= 1.0 / (distance_to_light);
+      result.light_direction = direction_to_light;
     }
-    else if(dot(direction_to_light, lnorm) > 0 && !any_hit(hit.position + lnorm * 0.01, direction_to_light, length(path_to_light)))
+    else if(dot(direction_to_light, lnorm) > 0 && !any_hit(hit.position + lnorm * 0.01, direction_to_light, distance_to_light))
     {
         vec3 ref = test_lights[light_index].color;
         vec3 color = ref;
         result.light_strength = length(color);
         result.light_color = packUnorm4x8(vec4(color, 0) / result.light_strength);
-        result.light_strength *= test_lights.length() / (distance_to_light);
+        result.light_strength *= test_lights.length()/ (distance_to_light);
+        result.light_direction = direction_to_light;
     }
 
     result.generated_ray = id;
@@ -370,11 +370,6 @@ hit_t nearest_hit(vec3 ray_origin, vec3 ray_direction, float max_distance)
     vec3 normal = normalize(normal_matrix * (hit_bary.x * n1 + hit_bary.y * n2 + (1.0 - hit_bary.x - hit_bary.y) * n0));
     vec3 face_normal = normalize(normal_matrix * cross(normalize(p1 - p0), normalize(p2 - p0)));
     
-    if (sign(dot(normal, ray_direction)) != sign(dot(face_normal, ray_direction)))
-    {
-        normal = face_normal;
-    }
-
     hit.normal = normal;
 
     hit.material_index = geometries[hit_geometry].material_index;

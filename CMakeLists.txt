@@ -34,7 +34,11 @@ add_executable(myrt
     "src/pathtracer/sequential_pathtracer.hpp" 
     "src/pathtracer/sequential_pathtracer.cpp" 
     "src/pathtracer/material.hpp" 
-    "src/pathtracer/material.cpp" "src/pathtracer/parameter.hpp" "src/pathtracer/parameter.cpp" "src/pathtracer/parameterized.hpp" "src/pathtracer/parameterized.cpp")
+    "src/pathtracer/material.cpp" 
+    "src/pathtracer/parameter.hpp" 
+    "src/pathtracer/parameter.cpp" 
+    "src/pathtracer/parameterized.hpp" 
+    "src/pathtracer/parameterized.cpp"  "src/dynamic/object.hpp" "src/dynamic/property.hpp" "src/dynamic/object.cpp" "src/dynamic/property.cpp" "src/dynamic/material.hpp" "src/dynamic/material.cpp" "src/dynamic/xgl_tokenizer.hpp" "src/dynamic/xgl_tokenizer.cpp" "src/dynamic/xgl_parser.hpp" "src/dynamic/xgl_parser.cpp" "src/dynamic/xgl_parser2.hpp" "src/dynamic/xgl_parser2.cpp")
 target_compile_features(myrt PUBLIC cxx_std_20)
 
 find_package(SFML 2 COMPONENTS graphics audio main network system window REQUIRED)

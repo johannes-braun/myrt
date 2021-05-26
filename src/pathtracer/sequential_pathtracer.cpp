@@ -159,7 +159,6 @@ namespace myrt {
   void sequential_pathtracer::invalidate_shaders()
   {
     invalidate_shader(shader_flags::all);
-
   }
   void sequential_pathtracer::invalidate_shader(shader_flags which)
   {

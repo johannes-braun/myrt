@@ -13,6 +13,8 @@
 
 #include <format>
 
+#include "dynamic/material.hpp"
+
 namespace stbi
 {
   template<typename T>
@@ -122,6 +124,7 @@ void material_sample(vec3 point, vec2 uv, vec3 normal, vec3 towards_light, vec3 
   material_state.is_incoming = dot(normal, -towards_viewer) < 0;
   material_state.ior1 = material_state.is_incoming ? 1.0 : material_state.mat.ior;
   material_state.ior2 = material_state.is_incoming ? material_state.mat.ior : 1.0;
+
   brdf_result_t ev;
   pbr_eval(material_state.mat, towards_viewer, towards_light, material_normal(normal), material_state.ior1, material_state.ior2, ev);
   reflectance = ev.reflectance;
@@ -137,42 +140,18 @@ vec3 material_continue_ray(vec2 random, vec3 towards_viewer, vec3 normal)
 }
 );
 
+#include "dynamic/xgl_tokenizer.hpp"
+#include "dynamic/xgl_parser2.hpp"
 
 int main(int argc, char** argv) {
 
-  //myrt::global_info globals;
-  //{
-  //  myrt::parameter_scope par_scope;
-  //  par_scope.inline_code << "int _cmt = -1;void material_load(int i){_cmt=i;switch(_MTY(_cmt)){";
-  //  for (auto const& mt : material_types) {
-  //    auto [id, name] = make_material_definition(globals, mt);
-  //    par_scope.inline_code << "case " << id << ':' << name << "l(_l" << name << "(_MBO(i))); break;";
-  //  }
-  //  par_scope.inline_code << "}}";
-  //  globals.auxilliary << par_scope.inline_code.str();
-  //}
+  std::ifstream file_stream("C:\\Users\\johan\\Documents\\Projekte\\myrt\\src\\dynamic\\test_material.glsl", std::ios::binary);
+  std::string source((std::istreambuf_iterator<char>(file_stream)),
+    std::istreambuf_iterator<char>());
+  file_stream.close();
 
-  //{
-  //  myrt::parameter_scope par_scope;
-  //  par_scope.inline_code << "void material_sample(vec3 point, vec2 uv, vec3 normal, vec3 towards_light, vec3 towards_viewer, out vec3 reflectance, out float pdf){reflectance = vec3(1, 0, 0); pdf=1;switch(_MTY(_cmt)){";
-  //  for (auto const& mt : material_types) {
-  //    auto [id, name] = make_material_definition(globals, mt);
-  //    par_scope.inline_code << "case " << id << ':' << name << "r(point, uv, normal, towards_light, towards_viewer, reflectance, pdf); break;";
-  //  }
-  //  par_scope.inline_code << "}}";
-  //  globals.auxilliary << par_scope.inline_code.str();
-  //}
-
-  //{
-  //  myrt::parameter_scope par_scope;
-  //  par_scope.inline_code << "vec3 material_continue_ray(vec2 r,vec3 v,vec3 n) {switch(_MTY(_cmt)){default:return vec3(0);";
-  //  for (auto const& mt : material_types) {
-  //    auto [id, name] = make_material_definition(globals, mt);
-  //    par_scope.inline_code << "case " << id << ":return " << name << "c(r,v,n);";
-  //  }
-  //  par_scope.inline_code << "}}";
-  //  globals.auxilliary << par_scope.inline_code.str();
-  //}
+  myrt::xgl_tokenizer tok(source);
+  myrt::xgl::parser parser(tok);
 
   sf::ContextSettings settings;
   settings.majorVersion = 4;
@@ -195,19 +174,6 @@ int main(int argc, char** argv) {
   }
   render_thread.request_stop();
 }
-//
-//std::mt19937 twister;
-//myrt::scene::material_pointer create_random_material(myrt::scene& scene)
-//{
-//  std::uniform_real_distribution<float> const distribution(0.0, 1.0);
-//  return scene.push_material({
-//            .albedo_rgba = rnu::vec4ui8(distribution(twister) * 255, distribution(twister) * 255, distribution(twister) * 255, 255),
-//            .ior = distribution(twister) + 1.0f,
-//            .roughness = distribution(twister),
-//            .metallic = distribution(twister)
-//    });
-//}
-
 void render_function(std::stop_token stop_token, sf::RenderWindow* window)
 {
   myrt::thread_pool loading_pool;
@@ -220,8 +186,8 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
   myrt::sequential_pathtracer seq_pt;
 
   rnu::cameraf camera(rnu::vec3{ 0.0f, 0.0f, -15.f });
-  std::vector<myrt::geometric_object> objects_resource(load_object_file(scene, "mona.obj", 12));
-  myrt::async_resource<std::pair<GLuint, GLuint>> cube_resource(loading_pool, [] { sf::Context context; return load_cubemap("whipple_creek"); });
+  std::vector<myrt::geometric_object> objects_resource(load_object_file(scene, "shapes.obj", 2));
+  myrt::async_resource<std::pair<GLuint, GLuint>> cube_resource(loading_pool, [] { sf::Context context; return load_cubemap("gamrig"); });
 
   GLuint bokeh = load_bokeh();
   myrt::scene::material_pointer texmat;
@@ -406,7 +372,7 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window)
         }
         {
           auto r = scene.get_parameter_value<float>(obj.material, "roughness");
-          if (ImGui::DragFloat("roughness", &r, 0.01f, 0.04f, 1.0f))
+          if (ImGui::DragFloat("roughness", &r, 0.01f, 0.0f, 1.0f))
           {
             scene.set_parameter(obj.material, "roughness", r);
           }

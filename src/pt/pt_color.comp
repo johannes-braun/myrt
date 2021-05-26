@@ -8,7 +8,6 @@ layout(bindless_sampler) uniform;
 #include "resample.glsl"
 #include "transform.glsl"
 #include "random.glsl"
-//#include "pbr.glsl"
 
 struct generate_output_t {
   vec3  origin;
@@ -19,7 +18,8 @@ struct generate_output_t {
   float pixel_y;
   vec4  color;
   float pdf;
-  float pad[3];
+  float weight;
+  float pad[2];
 };
 
 struct trace_output_t {
@@ -62,24 +62,11 @@ layout(location = 0) uniform uint sample_index;
 layout(location = 1) uniform bool force_write_color;
 layout(location = 2) uniform int random_sample;
 layout(location = 3) uniform int bounce_index;
+
 vec3 tonemapFilmic(vec3 x) {
   vec3 X = max(vec3(0.0), x - 0.004);
   vec3 result = (X * (6.2 * X + 0.5)) / (X * (6.2 * X + 1.7) + 0.06);
   return pow(result, vec3(2.2));
-}
-
-float tonemapFilmic(float x) {
-  float X = max(0.0, x - 0.004);
-  float result = (X * (6.2 * X + 0.5)) / (X * (6.2 * X + 1.7) + 0.06);
-  return pow(result, 2.2);
-}
-
-vec3 unreal(vec3 x) {
-  return x / (x + 0.155) * 1.019;
-}
-
-float unreal(float x) {
-  return x / (x + 0.155) * 1.019;
 }
 
 vec3 tonemap(vec3 col)
@@ -87,20 +74,10 @@ vec3 tonemap(vec3 col)
   return tonemapFilmic(col);
 }
 
-vec4 rescale_rgb(vec4 col)
-{
-  return vec4(pow(col.rgb, vec3(1/1.0)), col.a);
-} 
-
-vec4 unscale_rgb(vec4 col)
-{
-  return vec4(pow(col.rgb, vec3(1.0)), col.a);
-}
-
 void accumulate_color(vec4 new_colori, ivec2 pixel)
 {
   generate_output_t gen = generate_output[gl_GlobalInvocationID.x];
-  vec4 new_color = clamp(new_colori, 0, 20);
+  vec4 new_color = new_colori;
 
   vec4 last_color = imageLoad(debug_image, pixel);
 
@@ -108,18 +85,19 @@ void accumulate_color(vec4 new_colori, ivec2 pixel)
   {
     new_color = last_color;
   }
-
+  vec4 actual_last_color = last_color;
   if(sample_index == 0)
   {
-    last_color = new_color;
+    last_color = vec4(new_color.rgb, 1);
   }
   else
   {
-    vec4 nc = new_color;
-    last_color = mix(last_color, nc, 1.0 / float(sample_index + 1));
+    last_color += vec4(new_color.rgb, 1);
   }
+  if(any(isnan(last_color))||any(isinf(last_color)))
+    last_color = actual_last_color;
   imageStore(debug_image, pixel, last_color);
-  imageStore(output_image, pixel, vec4(tonemap(last_color.rgb), last_color.a));
+  imageStore(output_image, pixel, vec4(tonemap(clamp((last_color.rgb / last_color.a), 0, 4)), 1));
 }
 
 struct material_sample_t
@@ -153,10 +131,7 @@ void main() {
     if(trace.intersects == 2) // hit light
     {
       trace.intersects = 0;
-      if(bounce_index == 0)
-        accumulate_color(vec4((unpackUnorm4x8(trace.light_color).rgb * trace.light_strength), 1), ivec2(pixel));
-      else
-        accumulate_color(vec4((unpackUnorm4x8(trace.light_color).rgb * trace.light_strength * gen.reflectance + gen.color.rgb), 1), ivec2(pixel));
+      accumulate_color(vec4((unpackUnorm4x8(trace.light_color).rgb * trace.light_strength) * gen.reflectance/gen.pdf, 1) + gen.color, ivec2(pixel));
       return;
     }
 
@@ -172,42 +147,27 @@ void main() {
     material_sample_t material;
     material_sample(trace.point, trace.uv, trace.normal, generated, -gen.direction, material.reflectance, material.pdf);
 
-    if(force_write_color || material.pdf < 1e-6 || isnan(material.pdf) || isinf(material.pdf) || 
+    if(force_write_color || gen.pdf < 1e-5 || material.pdf < 1e-6 || isnan(material.pdf) || isinf(material.pdf) || 
       any(isnan(material.reflectance)) || any(isinf(material.reflectance)) || 
       any(isnan(generated)) || any(isinf(generated)))
     {
-      if(any(isnan(material.reflectance)) || any(isinf(material.reflectance)))
+      if(any(isnan(material.reflectance)) || any(isinf(material.reflectance)) || isnan(gen.pdf) || isinf(gen.pdf) || gen.pdf < 1e-5)
         accumulate_color(gen.color, ivec2(pixel));
       else
-        accumulate_color(gen.color + vec4(gen.reflectance, 0), ivec2(pixel));
+        accumulate_color(gen.color + vec4(gen.reflectance / gen.pdf, 0), ivec2(pixel));
       return;
     }
     
     if(trace.light_strength > 0)
     {
       material_sample_t light_material;
+      light_material.pdf = 1;
+      light_material.reflectance = vec3(1);
       material_sample(trace.point, trace.uv, trace.normal, trace.light_direction, -gen.direction, light_material.reflectance, light_material.pdf);
       
-      gen.color += vec4(unpackUnorm4x8(trace.light_color).rgb * trace.light_strength * light_material.reflectance * gen.reflectance, 0);
+      if(!any(isinf(light_material.reflectance)) && !any(isinf(light_material.reflectance)))
+        gen.color += vec4(unpackUnorm4x8(trace.light_color).rgb * trace.light_strength * clamp(light_material.reflectance, 0, 1), 0);
     }
-
-//    {
-//      float bias = 3;
-//      // trace a ray roughly towards the light...
-//      vec3 light_caster = generated;
-//      light_caster = normalize(light_caster);
-//      
-//      material_sample_t light_material2;
-//      material_sample(trace.point, trace.uv, trace.normal, light_caster, -gen.direction, light_material2.reflectance, light_material2.pdf);
-//
-//      if(light_material2.pdf > 5*random_next())
-//      {
-//        generated = light_caster;
-//        float p = material.pdf;
-//        material = light_material2;
-//        material.pdf = light_material2.pdf;
-//      }
-//    }
 
     vec3 ld = -gen.direction;
     vec3 hd = trace.normal;
@@ -215,7 +175,7 @@ void main() {
     
     gen.origin = trace.point + 1e-3 * gen.direction;
     gen.pdf *= material.pdf;
-    gen.reflectance *= material.reflectance * abs(dot(generated, hd)) / material.pdf;
+    gen.reflectance *= material.reflectance;
     gen.random_value = random_value(int(int(2341335623 * gen.random_value) + 357883444*id));
     generate_output[id] = gen;
   }
@@ -224,12 +184,12 @@ void main() {
     vec3 env;
     if(textureSize(cubemap, 0).x > 10)
     {
-      env = gen.reflectance * textureLod(cubemap, gen.direction, 0).rgb;
+      env = gen.reflectance * textureLod(cubemap, gen.direction, 0).rgb / gen.pdf;
     }
     else
     {
-      env = gen.reflectance * mix(vec3(0.3, 0.4, 0.5), vec3(1.0, 0.98, 0.96), (gen.direction.y + 1) / 2);
+      env = gen.reflectance * mix(vec3(0.3, 0.4, 0.5), vec3(1.0, 0.98, 0.96), (gen.direction.y + 1) / 2) / gen.pdf;
     }
-    accumulate_color(gen.color + vec4(env, 0), ivec2(pixel));
+    accumulate_color(gen.color + vec4(clamp(env, 0, 16), 0), ivec2(pixel));
   }
 }

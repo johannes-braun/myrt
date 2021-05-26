@@ -50,6 +50,11 @@ float fresnel(float cos_theta, float ior_in, float ior_out, float metallic)
 
 vec3 nreflect(vec3 towards_view, vec3 normal, vec3 microfacet_normal)
 {
+  /*float d = dot(towards_view, normal);
+  float thresh = 0.25;
+  if (d < thresh)
+    towards_view += 2*abs(d - thresh) * normal;*/
+
   vec3 ray = reflect(-towards_view, microfacet_normal);
 
   float d = dot(ray, normal);
@@ -81,26 +86,30 @@ float GeometrySmith(vec3 N, vec3 V, vec3 L, float k)
   return ggx1 * ggx2;
 }
 
+bool after_sample = false;
+
 void pbr_ggx_eval(material_info_t material, vec3 towards_view, vec3 towards_light, vec3 normal, float ior_front, float ior_back, inout brdf_result_t result)
 {
   float roughness = material.roughness * material.roughness;
+
   vec3 microfacet_normal = normalize((towards_light + towards_view));
-  float D = ggx_distribution(normal, microfacet_normal, roughness);
+  float D = (after_sample && roughness < 0.01) ? 1 : ggx_distribution(normal, microfacet_normal, roughness);
   float G = GeometrySmith(normal, towards_view, towards_light, roughness);// cxcook_torrance_geometry_1(towards_view, normal, microfacet_normal)* cxcook_torrance_geometry_1(towards_light, normal, microfacet_normal);
 
   // F is done by just the fresnel based random sampling
+  float fresnel_cos_theta = dot(towards_view, microfacet_normal);
+  float F = fresnel(fresnel_cos_theta, ior_front, ior_back, material.metallic);
 
   float den = 4 * abs(dot(towards_view, normal)) * abs(dot(towards_light, normal));
 
   float jacobian = 1 / (4 * abs(dot(towards_view, normal)));
 
-  float fresnel_cos_theta = abs(dot(towards_view, microfacet_normal));
-  float F = fresnel(fresnel_cos_theta, ior_front, ior_back, 0); 
-
   float cos_theta = (dot(microfacet_normal, normal));
-  result.pdf = D * G * cos_theta * jacobian;// D* (cos_theta)*jacobian;
+
   vec3 col = mix(vec3(1), color_get(material.albedo_rgba_unorm).rgb, sqrt(material.metallic));
-  result.reflectance = col * D * G * cos_theta / den;// abs(dot(towards_light, normal));// *D* G / den;
+
+  result.pdf = F * D * G * cos_theta / den;// D* (cos_theta)*jacobian;
+  result.reflectance = col * result.pdf;// abs(dot(towards_light, normal));// *D* G / den;
 }
 //
 //vec3 ggx_pbr_transmit_resample(vec2 random_sample, material_info_t material, vec3 towards_view, vec3 normal, float ior_front, float ior_back)
@@ -120,7 +129,7 @@ void ggx_pbr_transmit_eval(material_info_t material, vec3 towards_view, vec3 tow
   //// but here we always need the one pointing towards the viewer.
   microfacet_normal *= sign(dot(microfacet_normal, normal));
 
-  float D = ggx_distribution(normal, microfacet_normal, roughness);
+  float D = (after_sample && roughness < 0.01) ? 1 : ggx_distribution(normal, microfacet_normal, roughness);
   float G = GeometrySmith(normal, towards_view, towards_light, roughness);// ggx_geometry(-towards_view, towards_light, normal, microfacet_normal, roughness);
   //// F is done by just the fresnel based random sampling
 
@@ -132,14 +141,23 @@ void ggx_pbr_transmit_eval(material_info_t material, vec3 towards_view, vec3 tow
   float prefac = ((abs(idoth) * abs(odoth)) / (abs_idotn * abs_odotn));
   float den = (ior_front * idoth + ior_back * odoth);
 
+  float fresnel_cos_theta = dot(towards_view, microfacet_normal);
+  float F = fresnel(fresnel_cos_theta, ior_front, ior_back, material.metallic);
+
   float ior2_by_den2 = ior_back * ior_back / (den * den);
-  float ft = prefac * G * D * ior2_by_den2;
+  float ft = prefac * (1 - F) * G * D * ior2_by_den2;
   float jacobian = ior2_by_den2 * abs(odoth);
 
   float cos_theta = (dot(microfacet_normal, normal));
-  result.pdf = cos_theta * G * D * jacobian;
-  result.reflectance = cos_theta * color_get(material.albedo_rgba_unorm).rgb * ft;
+  result.pdf = max(0.001, cos_theta * ft);
+  result.reflectance = color_get(material.albedo_rgba_unorm).rgb * result.pdf;
 }
+
+float resample_factor = 1.0;
+
+float ref = 1.0;
+float trm = 1.0;
+float dif = 1.0;
 
 vec3 pbr_resample(vec2 random_sample, material_info_t material, vec3 towards_view, vec3 normal, float ior_front, float ior_back)
 {
@@ -153,24 +171,23 @@ vec3 pbr_resample(vec2 random_sample, material_info_t material, vec3 towards_vie
   float fresnel_cos_theta = dot(towards_view, microfacet_normal);
   float F = fresnel(fresnel_cos_theta, ior_front, ior_back, material.metallic);
 
-  if (F >= frand)
+  after_sample = true;
+  vec3 refracted = refract(-towards_view, microfacet_normal, ior_front / ior_back);// ggx_pbr_transmit_resample(random_sample, material, towards_view, normal, ior_front, ior_back);
+  if ((material.transmission > 0 && refracted == vec3(0)) || F >= frand)
   {
     pbr_state = s_reflect;
+    resample_factor = F;
     return nreflect(towards_view, normal, microfacet_normal);//pbr_ggx_resample(random_sample, material, towards_view, normal, ior_front, ior_back);
   }
   else if(material.transmission >= trand)
   {
-    vec3 ray = refract(-towards_view, microfacet_normal, ior_front/ior_back);// ggx_pbr_transmit_resample(random_sample, material, towards_view, normal, ior_front, ior_back);
-    if (ray == vec3(0) || dot(ray, normal) >= 0)
-    {
-      pbr_state = s_reflect;
-      return nreflect(towards_view, normal, microfacet_normal); //pbr_ggx_resample(random_sample, material, towards_view, normal, ior_front, ior_back);
-    }
+    resample_factor = (1-F) * material.transmission;
     pbr_state = s_transmit;
-    return ray;
+    return refracted;
   }
   else
   {
+    resample_factor = (1 - F) * (1 - material.transmission);
     pbr_state = s_diffuse;
     material.roughness = 1.0;
     material.metallic = 1.0;
@@ -184,17 +201,60 @@ vec3 pbr_resample(vec2 random_sample, material_info_t material, vec3 towards_vie
 
 void pbr_eval(material_info_t material, vec3 towards_view, vec3 towards_light, vec3 normal, float ior_front, float ior_back, inout brdf_result_t result)
 {
+  //vec3 microfacet_normalr = normalize((towards_light + towards_view));
+  //vec3 microfacet_normalt = normalize(-(ior_front * towards_view + ior_back * towards_light));
+  //if (dot(towards_light, normal) < 0)
+  //  microfacet_normalr = microfacet_normalt;
+
+  brdf_result_t transmit;
+  ggx_pbr_transmit_eval(material, towards_view, towards_light, normal, ior_front, ior_back, transmit);
+
+  brdf_result_t gloss;
+  pbr_ggx_eval(material, towards_view, towards_light, normal, ior_front, ior_back, gloss);
+
+  brdf_result_t diffuse;
+  material.roughness = 1.0;
+  material.metallic = 1.0;
+  pbr_ggx_eval(material, towards_view, towards_light, normal, ior_front, ior_back, diffuse);
+
+  //float fresnel_cos_theta = dot(towards_view, microfacet_normalr);
+  //float F = fresnel(fresnel_cos_theta, ior_front, ior_back, material.metallic);
+  //float T = (1 - F) * material.transmission;
+  //float D = (1 - F) * (1-material.transmission);
+
+  //float K = F;
+  //result = gloss;
+  //if (D > K)
+  //  result = diffuse;
+  //if (T > K)
+  //  result = transmit;
+
+  //bool brr = false;
+
   switch (pbr_state)
   {
   case s_transmit:
-    ggx_pbr_transmit_eval(material, towards_view, towards_light, normal, ior_front, ior_back, result);
+    result = transmit;
     break;
   case s_diffuse:
-    material.roughness = 1.0;
-    material.metallic = 1.0;
+    result = diffuse;
+    break;
   case s_reflect:
-    pbr_ggx_eval(material, towards_view, towards_light, normal, ior_front, ior_back, result);
+    result = gloss;
     break;
   }
+  after_sample = false;
+  /*if (isnan(transmit.pdf))
+    transmit.pdf = 0;
+  if (isnan(diffuse.pdf))
+    diffuse.pdf = 0;
+  if (isnan(gloss.pdf))
+    gloss.pdf = 0;*/
+
+  /*float den = (transmit.pdf + diffuse.pdf + gloss.pdf);
+  g_sample_weight = clamp(result.pdf / den, 0, 5);*/
+
+  result.pdf *= resample_factor;
+  result.reflectance *= resample_factor;
 }
 #undef material_info_t

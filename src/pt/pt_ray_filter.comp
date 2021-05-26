@@ -26,7 +26,8 @@ struct generate_output_t {
   float pixel_y;
   vec4  color;
   float pdf;
-  float pad[3];
+  float weight;
+  float pad[2];
 };
 
 layout(binding = 0, std430) restrict  buffer GenerateOutput { generate_output_t generate_input[]; };

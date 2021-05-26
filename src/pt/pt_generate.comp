@@ -11,7 +11,8 @@ struct generate_output_t {
   float pixel_y;
   vec4  color;
   float pdf;
-  float pad[3];
+  float weight;
+  float pad[2];
 };
 
 layout(location = 0) uniform mat4 inverse_camera_view;
@@ -77,6 +78,7 @@ void main()
   result.pixel_x = pixel.x;
   result.pixel_y = pixel.y;
   result.pdf = 1.0;
-  result.pad = float[3](0,0,0);
+  result.weight = 1.0;
+  result.pad = float[2](0,0);
   generate_output[id] = result;
 }

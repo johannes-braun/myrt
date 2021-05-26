@@ -7,5 +7,12 @@
 //#include <pbr.glsl>
 //struct MT0s_t{pbr_matinfo_t mat;bool is_incoming;float ior1;float ior2;};MT0s_t MT0s;vec3 MT0_normal(vec3 n){return MT0s.is_incoming?n:-n;}void MT0l(MT0 m){MT0s.mat.albedo_rgba_unorm=color_make(m.albedo_rgba_unorm);MT0s.mat.ior=m.ior;MT0s.mat.roughness=m.roughness;MT0s.mat.metallic=m.metallic;MT0s.mat.transmission=m.transmission;}void MT0r(vec3 point,vec2 uv,vec3 normal,vec3 towards_light,vec3 towards_viewer,out vec3 reflectance,out float pdf){MT0s.is_incoming=dot(normal,-towards_viewer)<0;MT0s.ior1=MT0s.is_incoming?1.0:MT0s.mat.ior;MT0s.ior2=MT0s.is_incoming?MT0s.mat.ior:1.0;brdf_result_t ev;pbr_eval(MT0s.mat,towards_viewer,towards_light,MT0_normal(normal),MT0s.ior1,MT0s.ior2,ev);reflectance=ev.reflectance;pdf=ev.pdf;}vec3 MT0c(vec2 random,vec3 towards_viewer,vec3 normal){MT0s.is_incoming=dot(normal,-towards_viewer)<0;MT0s.ior1=MT0s.is_incoming?1.0:MT0s.mat.ior;MT0s.ior2=MT0s.is_incoming?MT0s.mat.ior:1.0;return pbr_resample(random,MT0s.mat,towards_viewer,MT0_normal(normal),MT0s.ior1,MT0s.ior2);}int _cmt=-1;void material_load(int i){_cmt=i;switch(_MTY(_cmt)){case 0:MT0l(_lMT0(_MBO(i)));break;}}void material_sample(vec3 point,vec2 uv,vec3 normal,vec3 towards_light,vec3 towards_viewer,out vec3 reflectance,out float pdf){reflectance=vec3(1,0,0);pdf=1;switch(_MTY(_cmt)){case 0:MT0r(point,uv,normal,towards_light,towards_viewer,reflectance,pdf);break;}}vec3 material_continue_ray(vec2 r,vec3 v,vec3 n){switch(_MTY(_cmt)){case 0:return MT0c(r,v,n);}return vec3(0);}
 
+#ifndef MYRT_INJECT_MATERIAL_CODE_HERE
+#define MYRT_INJECT_MATERIAL_CODE_HERE void material_load(int m){}\
+  void material_sample(vec3 point, vec2 uv, vec3 normal, vec3 towards_light, vec3 towards_viewer, out vec3 reflectance, out float pdf) \
+  { pdf = 1.0; reflectance = vec3(1); } \
+  vec3 material_continue_ray(vec2 random, vec3 towards_viewer, vec3 normal){ return vec3(0); }
+#endif
+
 MYRT_INJECT_MATERIAL_CODE_HERE
 
