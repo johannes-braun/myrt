@@ -39,10 +39,11 @@ struct drawable_geometry_t
     uint bvh_index_base_index;
     uint indices_base_index;
     uint points_base_index;
+    uint index_count;
 
     int material_index;
     int geometry_index;
-    int pad[2];
+    int pad[1];
 };
 
 struct drawable_sdf_t {
@@ -138,10 +139,10 @@ void main() {
   }
 
   test_lights[0].position = 2*vec3(4, 5, 4);
-  test_lights[0].color = 12*vec3(1, 1.8, 3);
+  test_lights[0].color = 6*vec3(1, 1.8, 3);
   test_lights[0].radius = 1.5f;
   test_lights[1].position = 2*vec3(-4, 3, 5);
-  test_lights[1].color = 12*vec3(3, 1.8, 1);
+  test_lights[1].color = 8*vec3(3, 1.8, 1);
   test_lights[1].radius = 1.5f;
 
   generate_output_t base = generate_output[id];
@@ -275,7 +276,8 @@ bool visit_triangle(vec3 ray_origin, vec3 ray_direction, uint index, inout float
         max_ray_distance = traversal.t;
     }
 
-    if (traversal.any_hit && hits) return true;
+    if (traversal.any_hit && hits) 
+      return true;
     return false;
 }
 
@@ -286,7 +288,9 @@ bool visit_object_aabb(vec3 ray_origin, vec3 ray_direction, uint i, inout float 
     vec3 ro = (geometries[i].inverse_transformation * vec4(ray_origin, 1)).xyz;
     vec3 rd = (((geometries[i].inverse_transformation) * vec4(ray_direction, 0)).xyz);
     traversal.t = max_ray_distance;
+    
     bool current_hits = bvh_traverse(geometries[i].bvh_node_base_index, geometries[i].bvh_index_base_index, ro, rd, max_ray_distance);
+
     current_hits = current_hits && traversal.global_t > traversal.t;
 
     if (current_hits)
@@ -333,7 +337,6 @@ hit_t nearest_hit(vec3 ray_origin, vec3 ray_direction, float max_distance)
     traversal.any_hit = false;
     traversal.global_t = max_distance;
     hit.hits = bvh_traverse_global(0, 0, ray_origin, ray_direction, max_distance);
-
     hit.t = traversal.global_t;
 
     bool hit_marched = false;

@@ -43,7 +43,7 @@ struct material_reference_t
 };
 
 layout(binding = 0, std430) restrict buffer GenerateInput { generate_output_t generate_output[]; };
-layout(binding = 1, std430) restrict readonly buffer TraceOutput { trace_output_t trace_output[]; };
+layout(binding = 1, std430) restrict buffer TraceOutput { trace_output_t trace_output[]; };
 layout(binding = 2, std430) readonly buffer AccessControl { 
   uint num_elements;
   uint num_groups_x;
@@ -66,7 +66,7 @@ layout(location = 3) uniform int bounce_index;
 vec3 tonemapFilmic(vec3 x) {
   vec3 X = max(vec3(0.0), x - 0.004);
   vec3 result = (X * (6.2 * X + 0.5)) / (X * (6.2 * X + 1.7) + 0.06);
-  return pow(result, vec3(2.2));
+  return pow(result, vec3(1.3));
 }
 
 vec3 tonemap(vec3 col)
@@ -130,7 +130,7 @@ void main() {
   {
     if(trace.intersects == 2) // hit light
     {
-      trace.intersects = 0;
+      trace_output[id].intersects = 0;
       accumulate_color(vec4((unpackUnorm4x8(trace.light_color).rgb * trace.light_strength) * gen.reflectance/gen.pdf, 1) + gen.color, ivec2(pixel));
       return;
     }
@@ -147,10 +147,22 @@ void main() {
     material_sample_t material;
     material_sample(trace.point, trace.uv, trace.normal, generated, -gen.direction, material.reflectance, material.pdf);
 
+   { // Russian roulette
+     float p = (gen.pdf) * 1;
+     float rnd = random_next();
+     if(rnd > p)
+     {
+        trace_output[id].intersects = 0;
+       accumulate_color(gen.color + vec4(gen.reflectance / gen.pdf, 0), ivec2(pixel));
+       return;
+     }
+   }
+
     if(force_write_color || gen.pdf < 1e-5 || material.pdf < 1e-6 || isnan(material.pdf) || isinf(material.pdf) || 
       any(isnan(material.reflectance)) || any(isinf(material.reflectance)) || 
       any(isnan(generated)) || any(isinf(generated)))
     {
+      trace_output[id].intersects = 0;
       if(any(isnan(material.reflectance)) || any(isinf(material.reflectance)) || isnan(gen.pdf) || isinf(gen.pdf) || gen.pdf < 1e-5)
         accumulate_color(gen.color, ivec2(pixel));
       else
@@ -173,7 +185,7 @@ void main() {
     vec3 hd = trace.normal;
     gen.direction = generated;
     
-    gen.origin = trace.point + 1e-3 * gen.direction;
+    gen.origin = trace.point + 1e-4 * faceforward(trace.normal, -gen.direction, trace.normal);
     gen.pdf *= material.pdf;
     gen.reflectance *= material.reflectance;
     gen.random_value = random_value(int(int(2341335623 * gen.random_value) + 357883444*id));

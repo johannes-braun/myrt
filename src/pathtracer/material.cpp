@@ -1,5 +1,5 @@
 #include "material.hpp"
-#include "utils.hpp"
+#include <myrt/sfml/utils.hpp>
 
 namespace myrt
 {

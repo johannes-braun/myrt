@@ -33,7 +33,7 @@ namespace myrt
             .height = h,
             .depth = 1 });
     }
-    std::shared_ptr<texture_t> texture_provider_t::find(GLuint id)
+    std::shared_ptr<texture_t> texture_provider_t::find(std::uint32_t id)
     {
         if (auto const it = std::find_if(m_allocated_textures.begin(), m_allocated_textures.end(), [&](const decltype(m_allocated_textures)::value_type& pair) {
             return pair.second && pair.second->id() == id;

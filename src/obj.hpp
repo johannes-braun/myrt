@@ -29,6 +29,8 @@ namespace myrt::obj
         float ior;
         float dissolve;
         int illumination_model;
+
+        std::string map_diffuse;
     };
 
     struct vertex_group_t

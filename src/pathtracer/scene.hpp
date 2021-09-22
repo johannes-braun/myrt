@@ -6,7 +6,6 @@
 #include <stdexcept>
 #include <vector>
 #include <unordered_set>
-#include "glad/glad.h"
 #include <experimental/generator>
 #include "sdf.hpp"
 #include "material.hpp"
@@ -21,6 +20,7 @@ namespace myrt
     index_type bvh_index_base_index;
     index_type indices_base_index;
     index_type points_base_index;
+    index_type index_count;
   };
 
   struct sdf_info_t {
@@ -77,24 +77,26 @@ namespace myrt
   class scene
   {
   public:
+
+
     friend struct sdf_object;
     struct scene_buffers
     {
-      GLuint indices_buffer = 0;
-      GLuint vertices_buffer = 0;
-      GLuint normals_buffer = 0;
-      GLuint uvs_buffer = 0;
-      GLuint bvh_nodes_buffer = 0;
-      GLuint bvh_indices_buffer = 0;
-      GLuint drawable_buffer = 0;
-      GLuint materials_buffer = 0;
-      GLuint materials_data_buffer = 0;
-      GLuint sdf_data_buffer = 0;
-      GLuint sdf_drawable_buffer = 0;
-      GLuint global_bvh_nodes_buffer = 0;
-      GLuint global_bvh_indices_buffer = 0;
+      std::uint32_t indices_buffer = 0;
+      std::uint32_t vertices_buffer = 0;
+      std::uint32_t normals_buffer = 0;
+      std::uint32_t uvs_buffer = 0;
+      std::uint32_t bvh_nodes_buffer = 0;
+      std::uint32_t bvh_indices_buffer = 0;
+      std::uint32_t drawable_buffer = 0;
+      std::uint32_t materials_buffer = 0;
+      std::uint32_t materials_data_buffer = 0;
+      std::uint32_t sdf_data_buffer = 0;
+      std::uint32_t sdf_drawable_buffer = 0;
+      std::uint32_t global_bvh_nodes_buffer = 0;
+      std::uint32_t global_bvh_indices_buffer = 0;
     };
-    constexpr static size_t number_of_buffers = sizeof(scene_buffers) / sizeof(GLuint);
+    constexpr static size_t number_of_buffers = sizeof(scene_buffers) / sizeof(std::uint32_t);
 
     using geometry_pointer = std::shared_ptr<geometry_t>;
     using material_pointer = std::shared_ptr<material_t>;
@@ -113,6 +115,33 @@ namespace myrt
     using index_type = detail::default_index_type;
     using point_type = detail::default_point_type;
     using uv_type = rnu::vec2;
+
+    struct drawable_geometry_t
+    {
+      rnu::mat4 transformation;
+      rnu::mat4 inverse_transformation;
+      geometry_info_t geometry_info;
+      int material_index;
+      int geometry_index;
+      int pad[1];
+    };
+    struct drawable_sdf_t
+    {
+      rnu::mat4 transformation;
+      rnu::mat4 inverse_transformation;
+      int sdf_index;
+      int pad[3];
+    };
+    struct material_reference_t
+    {
+      int id;
+      int offset;
+    };
+    struct aligned_point_t
+    {
+      constexpr aligned_point_t(point_type point) : value(point) {}
+      alignas(4 * sizeof(float)) point_type value;
+    };
 
     scene();
     ~scene();
@@ -186,33 +215,6 @@ namespace myrt
     void erase_geometry_indirect(const geometry_pointer& geometry);
     /*void erase_material_direct(const material_pointer& material);
     void erase_material_indirect(const material_pointer& material);*/
-
-    struct drawable_geometry_t
-    {
-      rnu::mat4 transformation;
-      rnu::mat4 inverse_transformation;
-      geometry_info_t geometry_info;
-      int material_index;
-      int geometry_index;
-      int pad[2];
-    };
-    struct drawable_sdf_t
-    {
-      rnu::mat4 transformation;
-      rnu::mat4 inverse_transformation;
-      int sdf_index;
-      int pad[3];
-    };
-    struct material_reference_t
-    {
-      int id;
-      int offset;
-    };
-    struct aligned_point_t
-    {
-      constexpr aligned_point_t(point_type point) : value(point) {}
-      alignas(4 * sizeof(float)) point_type value;
-    };
 
     scene_buffers m_scene_buffers;
 

@@ -1,46 +1,10 @@
 #include "sequential_pathtracer.hpp"
 #include <glsp/glsp.hpp>
-#include "utils.hpp"
+#include <myrt/sfml/utils.hpp>
+#include <mygl/mygl.hpp>
+#include "bindings.hpp"
 
 namespace myrt {
-  std::optional<GLint> uniform_location(GLuint program, const char* name)
-  {
-    auto const location = glGetProgramResourceLocation(program, GL_UNIFORM, name);
-    if (location == GL_INVALID_INDEX)
-      return std::nullopt;
-    return location;
-  }
-  std::optional<GLint> storage_buffer_binding(GLuint program, const char* name)
-  {
-    GLint index = glGetProgramResourceIndex(program, GL_SHADER_STORAGE_BLOCK, name);
-    if (index == GL_INVALID_INDEX)
-      return std::nullopt;
-
-    constexpr GLenum prop = GL_BUFFER_BINDING;
-    GLint len;
-    GLint binding = GL_INVALID_INDEX;
-    glGetProgramResourceiv(program, GL_SHADER_STORAGE_BLOCK, index, 1, &prop, 1, &len, &binding);
-
-    if (binding == GL_INVALID_INDEX)
-      return std::nullopt;
-    return binding;
-  }
-  std::optional<GLint> sampler_binding(GLuint program, const char* name)
-  {
-    GLint binding = GL_INVALID_INDEX;
-    auto const location = uniform_location(program, name);
-    if (!location)
-      return std::nullopt;
-    glGetUniformiv(program, location.value(), &binding);
-    if (binding == GL_INVALID_INDEX)
-      return std::nullopt;
-    return binding;
-  }
-  GLuint if_empty(std::optional<GLint> const& val)
-  {
-    return val ? *val : -1;
-  }
-
   const static std::filesystem::path res_dir = "../../../res";
 
   void sequential_pathtracer::run(scene& scene, int width, int height)
@@ -71,21 +35,14 @@ namespace myrt {
     }
 
     pass_generate();
-    glFinish();
-    constexpr int num_bounces = 8;
-    for (int i = 0; i < num_bounces; ++i)
+    for (int i = 0; i < m_num_bounces; ++i)
     {
       pass_trace(scene);
-      glFinish();
       pass_color(false, i);
-      glFinish();
       pass_filter();
-      glFinish();
     }
     pass_trace(scene);
-    glFinish();
-    pass_color(true, num_bounces);
-    glFinish();
+    pass_color(true, m_num_bounces);
 
     m_sample_counter++;
   }
@@ -131,7 +88,7 @@ namespace myrt {
       invalidate_counter();
     }
   }
-  void sequential_pathtracer::set_bokeh_mask(GLuint bokeh_texture)
+  void sequential_pathtracer::set_bokeh_mask(std::uint32_t bokeh_texture)
   {
     if (bokeh_texture != m_bokeh_texture)
     {
@@ -139,7 +96,7 @@ namespace myrt {
       invalidate_counter();
     }
   }
-  void sequential_pathtracer::set_cubemap(GLuint map, GLuint sampler)
+  void sequential_pathtracer::set_cubemap(std::uint32_t map, std::uint32_t sampler)
   {
     if (m_cubemap != map || m_cubemap_sampler != sampler)
     {
@@ -206,13 +163,23 @@ namespace myrt {
     m_sample_counter = 0;
   }
 
-  GLuint sequential_pathtracer::color_texture_id() const {
+  std::uint32_t sequential_pathtracer::color_texture_id() const {
     return m_color_texture ? m_color_texture->id() : 0u;
   }
 
-  GLuint sequential_pathtracer::debug_texture_id() const
+  std::uint32_t sequential_pathtracer::debug_texture_id() const
   {
     return m_debug_texture->id();
+  }
+
+  texture_provider_t& sequential_pathtracer::texture_provider()
+  {
+    return m_texture_provider;
+  }
+
+  texture_provider_t const& sequential_pathtracer::texture_provider() const
+  {
+    return m_texture_provider;
   }
 
   void sequential_pathtracer::create_generate_shader()
@@ -249,7 +216,7 @@ namespace myrt {
 
     m_generate_bindings.output_buffer = if_empty(storage_buffer_binding(m_generate_shader, "GenerateOutput"));
 
-    GLint group_sizes[3]{};
+    std::int32_t group_sizes[3]{};
     glGetProgramiv(m_generate_shader, GL_COMPUTE_WORK_GROUP_SIZE, group_sizes);
     m_generate_group_sizes = { group_sizes[0], group_sizes[1] };
 
@@ -284,7 +251,7 @@ namespace myrt {
 
     std::uniform_real_distribution<float> distribution(0.f, 1.f);
     std::generate(m_random_texture_data.begin(), m_random_texture_data.end(), [&] {return distribution(m_rng); });
-    glTextureSubImage1D(m_random_texture->id(), 0, 0, GLsizei(m_random_texture_data.size()), GL_RED, GL_FLOAT, m_random_texture_data.data());
+    glTextureSubImage1D(m_random_texture->id(), 0, 0, std::int32_t(m_random_texture_data.size()), GL_RED, GL_FLOAT, m_random_texture_data.data());
     glBindTextureUnit(m_generate_bindings.random_texture, m_random_texture->id());
 
     glBindTextureUnit(m_generate_bindings.bokeh_shape, m_bokeh_texture);
@@ -328,7 +295,7 @@ namespace myrt {
 
     std::uniform_real_distribution<float> distribution(0.f, 1.f);
     std::generate(m_random_texture_data.begin(), m_random_texture_data.end(), [&] {return distribution(m_rng); });
-    glTextureSubImage1D(m_random_texture->id(), 0, 0, GLsizei(m_random_texture_data.size()), GL_RED, GL_FLOAT, m_random_texture_data.data());
+    glTextureSubImage1D(m_random_texture->id(), 0, 0, std::int32_t(m_random_texture_data.size()), GL_RED, GL_FLOAT, m_random_texture_data.data());
     glBindTextureUnit(m_trace_bindings.random_texture, m_random_texture->id());
 
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_trace_bindings.access_control, m_filter_control_buffer);
@@ -468,7 +435,7 @@ namespace myrt {
 
     std::uniform_real_distribution<float> distribution(0.f, 1.f);
     std::generate(m_random_texture_data.begin(), m_random_texture_data.end(), [&] {return distribution(m_rng); });
-    glTextureSubImage1D(m_random_texture->id(), 0, 0, GLsizei(m_random_texture_data.size()), GL_RED, GL_FLOAT, m_random_texture_data.data());
+    glTextureSubImage1D(m_random_texture->id(), 0, 0, std::int32_t(m_random_texture_data.size()), GL_RED, GL_FLOAT, m_random_texture_data.data());
     glBindTextureUnit(m_color_bindings.random_texture, m_random_texture->id());
 
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_color_bindings.generate_output, m_generate_buffer);

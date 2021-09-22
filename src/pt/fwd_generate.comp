@@ -1,0 +1,50 @@
+#version 460 core
+
+layout(local_size_x = 64) in;
+
+struct drawable_geometry_t
+{
+    mat4 transformation;
+    mat4 inverse_transformation;
+    uint bvh_node_base_index;
+    uint bvh_index_base_index;
+    uint indices_base_index;
+    uint points_base_index;
+    uint index_count;
+
+    int material_index;
+    int geometry_index;
+    int pad[1];
+};
+
+struct multi_draw_indirect_t
+{
+  uint count;
+  uint instances;
+  uint first_index;
+  uint first_vertex;
+  uint first_instance;
+
+  uint pad[3];
+};
+
+layout(binding = 0, std430) restrict readonly buffer Geometries { drawable_geometry_t geometries[]; };
+layout(binding = 1, std430) restrict writeonly buffer MultiDrawIndirect { multi_draw_indirect_t multi_draws[]; };
+
+void main() {
+  uint id = gl_GlobalInvocationID.x;
+  if(id >= geometries.length())
+  {
+    return;
+  }
+
+  drawable_geometry_t geo = geometries[id];
+
+  multi_draw_indirect_t indirect;
+  indirect.count = geo.index_count;
+  indirect.instances = 1;
+  indirect.first_index = geo.indices_base_index;
+  indirect.first_vertex = geo.points_base_index;
+  indirect.first_instance = 0;
+  multi_draws[id] = indirect;
+}

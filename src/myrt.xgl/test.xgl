@@ -1,0 +1,14 @@
+version 460 core;
+
+require "GL_ARB_bindless_texture";
+enable "GL_NV_gpu_program5";
+
+namespace pbr {
+
+  void material(int num)
+  {
+    num += 299 + 2 * num;
+
+  }
+
+}

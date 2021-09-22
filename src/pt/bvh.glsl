@@ -28,7 +28,7 @@ const uint type_shift = MYRT_BVH_NODE_TYPE_SHIFT;
 const uint type_mask = 1 << type_shift;
 const uint parent_mask = ~type_mask;
 
-bool bvh_ray_aabb_intersect(MYRT_POINT_TYPE mi, MYRT_POINT_TYPE ma, vec3 o, vec3 id, float mt, inout float t)
+bool bvh_ray_aabb_intersect(MYRT_POINT_TYPE mi, MYRT_POINT_TYPE ma, vec3 o, vec3 id, float mt, out float t)
 {
     vec3 t135 = (mi - o) * id;
     vec3 t246 = (ma - o) * id;
@@ -40,6 +40,7 @@ bool bvh_ray_aabb_intersect(MYRT_POINT_TYPE mi, MYRT_POINT_TYPE ma, vec3 o, vec3
         t = tmin;
         return true;
     }
+    t = mt;
     return false;
 }
 

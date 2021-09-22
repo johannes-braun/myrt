@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+  <Type Name="rnu::vec&lt;*,*&gt;">
+    <DisplayString Condition="count == 1">{{{_storage._Elems[0]}}}</DisplayString>
+    <DisplayString Condition="count == 2">{{{_storage._Elems[0]}, {_storage._Elems[1]}}}</DisplayString>
+    <DisplayString Condition="count == 3">{{{_storage._Elems[0]}, {_storage._Elems[1]}, {_storage._Elems[2]}}}</DisplayString>
+    <DisplayString Condition="count == 4">{{{_storage._Elems[0]}, {_storage._Elems[1]}, {_storage._Elems[2]}, {_storage._Elems[3]}}}</DisplayString>
+    <DisplayString>{ _storage }</DisplayString>
+
+    <Expand>
+      <Item Name="count">count</Item>
+      <Item Name="x" Condition="count &gt;= 1 &amp;&amp; count &lt;= 4">_storage._Elems[0]</Item>
+      <Item Name="y" Condition="count &gt;= 2 &amp;&amp; count &lt;= 4">_storage._Elems[1]</Item>
+      <Item Name="z" Condition="count &gt;= 3 &amp;&amp; count &lt;= 4">_storage._Elems[2]</Item>
+      <Item Name="w" Condition="count == 4">_storage._Elems[3]</Item>
+      <ArrayItems Condition="count &gt; 4">
+        <Size>$T2</Size>
+        <ValuePointer>_storage._Elems</ValuePointer>
+      </ArrayItems>
+    </Expand>
+  </Type>
+</AutoVisualizer>

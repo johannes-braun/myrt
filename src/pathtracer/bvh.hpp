@@ -169,8 +169,8 @@ namespace myrt
     using index_type = detail::default_index_type;
     using point_type = detail::default_point_type;
 
-    constexpr static size_t binned_sah_bin_count = 8;
-    constexpr static int min_leaf_primitives = 2;
+    constexpr static size_t binned_sah_bin_count = 16;
+    constexpr static int min_leaf_primitives = 1;
 
     [[nodiscard]] bvh(std::span<aabb_t const> aabbs, primitive_split_func split = nullptr);
     [[nodiscard]] std::experimental::generator<index_type> traverse(ray_t const& ray) const;

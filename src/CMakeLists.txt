@@ -1,0 +1,4 @@
+add_subdirectory(mygl)
+add_subdirectory(myrt.sfml)
+add_subdirectory(myrt.video)
+add_subdirectory(myrt.xgl)

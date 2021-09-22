@@ -70,6 +70,10 @@ namespace myrt::obj
                 line_stream >> current_material->emissive[1];
                 line_stream >> current_material->emissive[2];
             }
+            else if (identifier == "map_Kd")
+            {
+              line_stream >> current_material->map_diffuse;
+            }
         }
 
         return result;
@@ -226,6 +230,7 @@ namespace myrt::obj
                     int n = 0;
 
                     char* ptr = vertex.data();
+                    char* begin = ptr;
                     p = std::strtol(ptr, &ptr, 10);
                     ++ptr;
                     t = std::strtol(ptr, &ptr, 10);
@@ -243,6 +248,9 @@ namespace myrt::obj
                     if (n < 0) v[2] = static_cast<unsigned>(result.back().normals.size() + n);
                     else if (n != 0) v[2] = static_cast<unsigned>(n - nor_index_offset);
                     else v[2] = n;
+
+                    if (v[2] > 10000000)
+                      __debugbreak();
                 }
             }
         }

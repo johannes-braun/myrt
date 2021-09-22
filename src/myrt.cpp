@@ -27,7 +27,6 @@
 #include <rnu/camera.hpp>
 #include <rnu/math/math.hpp>
 
-#include "glad/glad.h"
 #include <stb_image.h>
 #include <stb_image_write.h>
 #include <imgui.h>

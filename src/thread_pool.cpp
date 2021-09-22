@@ -9,6 +9,7 @@ namespace myrt {
 
   thread_pool::~thread_pool()
   {
+    std::unique_lock<std::mutex> lock(m_jobs_mutex);
     for (auto& thread : m_threads)
       thread.request_stop();
     m_wait_condition.notify_all();

@@ -58,7 +58,7 @@ void main()
   vec2 pixel = vec2(pt);
 
   random_init(random_texture, ivec2(pt), random_seed);
-  vec2 off = random_uniform_circle(1.0f) / 2.0;
+  vec2 off = random_uniform_circle(0.7071067812f);
 
   vec2 tsize = vec2(image_size);
   vec4 ray_direction_hom = (inverse_camera_view * inverse_camera_projection * vec4(((off + pixel) / tsize) * 2 - 1, 1, 1));

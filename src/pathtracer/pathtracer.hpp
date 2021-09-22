@@ -4,7 +4,6 @@
 #include <random>
 #include <optional>
 #include <compare>
-#include "glad/glad.h"
 #include "texture_provider.hpp"
 #include "scene.hpp"
 #include "../thread_pool.hpp"
@@ -29,22 +28,22 @@ namespace myrt
 
 
     struct cubemap_texture {
-      GLuint cubemap;
-      GLuint sampler;
+      std::uint32_t cubemap;
+      std::uint32_t sampler;
     };
 
     constexpr static auto max_uniform_distribution_value = 0x0ffffffu;
     constexpr static auto random_number_count = 1 << 10;
 
     ~pathtracer();
-    void sample_to_framebuffer(scene& scene, GLuint target_framebuffer, GLenum attachment);
+    void sample_to_framebuffer(scene& scene, std::uint32_t target_framebuffer, GLenum attachment);
     void sample_to_display(scene& scene, int width, int height);
 
     void set_projection(rnu::mat4 matrix);
     void set_view(rnu::mat4 matrix);
     void set_cubemap(std::optional<cubemap_texture> cubemap);
     void set_lens_radius(float radius);
-    void set_bokeh_texture(std::optional<GLuint> bokeh);
+    void set_bokeh_texture(std::optional<std::uint32_t> bokeh);
     void set_focus(float focus);
     void set_max_bounces(int bounces);
     void set_enable_russian_roulette(bool enable);
@@ -61,19 +60,19 @@ namespace myrt
 
   private:
     void bind_scene(scene& scene) const;
-    void sample_internal(scene& scene, GLuint target_framebuffer, int width, int height);
+    void sample_internal(scene& scene, std::uint32_t target_framebuffer, int width, int height);
     void initialize(scene& scene);
     void deinitialize();
     void repopulate_random_texture();
 
     bool m_is_initialized = false;
-    std::optional<GLuint> m_program = std::nullopt;
+    std::optional<std::uint32_t> m_program = std::nullopt;
     std::atomic_uint m_compiling_program = 0;
-    GLuint m_framebuffer = 0;
-    GLuint m_vertex_array = 0;
-    GLuint m_cubemap = 0;
-    GLuint m_cubemap_sampler = 0;
-    GLuint m_bokeh = 0;
+    std::uint32_t m_framebuffer = 0;
+    std::uint32_t m_vertex_array = 0;
+    std::uint32_t m_cubemap = 0;
+    std::uint32_t m_cubemap_sampler = 0;
+    std::uint32_t m_bokeh = 0;
     texture_provider_t m_texture_provider;
 
     bool m_enable_russian_roulette = false;

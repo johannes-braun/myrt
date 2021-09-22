@@ -77,53 +77,48 @@ namespace myrt
     const auto enclose_reduce = [](aabb_t current, const aabb_t& next) -> aabb_t { current.enclose(next); return current; };
     for (int axis = 0; axis < 3; ++axis)
     {
-      std::partial_sum(begin(axises[axis].axis_bounds), end(axises[axis].axis_bounds), begin(axises[axis].accum_aabbs), enclose_reduce);
-      std::partial_sum(rbegin(axises[axis].axis_bounds), rend(axises[axis].axis_bounds), rbegin(axises[axis].accum_aabbsr), enclose_reduce);
+      std::partial_sum(begin(axises[axis].axis_bins), end(axises[axis].axis_bins), begin(axises[axis].accum_aabbs), enclose_reduce);
+      std::partial_sum(rbegin(axises[axis].axis_bins), rend(axises[axis].axis_bins), rbegin(axises[axis].accum_aabbsr), enclose_reduce);
       std::partial_sum(rbegin(axises[axis].axis_bounds), rend(axises[axis].axis_bounds), rbegin(axises[axis].accum_cbounds), enclose_reduce);
       std::partial_sum(begin(axises[axis].axis_counts), end(axises[axis].axis_counts), begin(axises[axis].accum_counts));
     }
 
-    const float sap = node.aabb().surface_area();
+    constexpr auto cost_traverse = 7.f;
+    constexpr auto cost_intersect = 2.f;
+
+    const float total_surface_area = node.aabb().surface_area();
+    const auto cost_area = [&](auto surface_area) {
+      return surface_area / total_surface_area;
+    };
+
     float best_cost = std::numeric_limits<float>::max();
     int best_axis = 0;
     int best_axis_partition = 0;
     for (int axis = 0; axis < 3; ++axis)
     {
-     /* struct ao {
-        float c;
-        int cf;
-        int cs;
-        float af;
-        float as;
-      };
-      std::array<ao, bvh::binned_sah_bin_count> arr;*/
       for (size_t index = 0; index < bvh::binned_sah_bin_count - 1; ++index)
       {
         const auto count_first = axises[axis].accum_counts[index];
         const auto count_second = axises[axis].accum_counts[bvh::binned_sah_bin_count - 1 - index];
         const auto area_first = axises[axis].accum_aabbs[index].surface_area();
         const auto area_second = axises[axis].accum_aabbsr[index].surface_area();
-        const auto cost = count_first * area_first / sap + count_second * area_second / sap;
 
-       /* arr[index] = ao{
-          cost, count_first, count_second, area_first, area_second
-        };*/
-        if (cost < best_cost)
+        auto const cost = cost_traverse + cost_intersect * (count_first * cost_area(area_first) + count_second * cost_area(area_second));
+
+        if (cost <= best_cost)
         {
           best_axis = axis;
           best_axis_partition = static_cast<int>(index);
           best_cost = cost;
         }
       }
-
-      int aid = 0;
     }
 
-    float const cost_without_split = static_cast<float>(axises[best_axis].accum_counts.back());
-    float const cost_factor = best_cost / cost_without_split;
+    float const total_count = static_cast<float>(axises[best_axis].accum_counts.back());
+    auto const cost_without_split = cost_intersect * total_count;
 
     auto const nval = sub_aabb.min[best_axis] + step[best_axis] * (best_axis_partition + 1);
-    return std::make_tuple(best_axis, nval, cost_factor <= 1, 0, best_axis_partition);
+    return std::make_tuple(best_axis, nval, best_cost < cost_without_split, 0, best_axis_partition);
   }
 
   [[nodiscard]] std::vector<aabb_t> generate_triangle_bounds(std::span<detail::default_index_type const> indices, std::function<detail::default_point_type(detail::default_index_type)> const& get_point)
@@ -375,7 +370,7 @@ namespace myrt
       build_state.indices.insert(build_state.indices.begin() + first, begin(build_state.inserter_indices), end(build_state.inserter_indices));
     }
 
-    auto const increment_if_larger = [](int ref, int by, bvh_node_t& node) {
+    auto const increment_if_larger = [](index_type ref, int by, bvh_node_t& node) {
       if (node.is_leaf())
       {
         if (node.first_child >= ref)

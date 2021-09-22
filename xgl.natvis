@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+  <Type Name="myrt::xgl::resolved_node">
+    <DisplayString>{{ name={identifier,na} }}</DisplayString>
+    <Expand>
+      <Item Name="identifier">identifier,na</Item>
+      <Item Name="optional">was_optional</Item>
+      
+      <CustomListItems MaxItemsPerView="50">
+        <Variable Name="current" InitialValue="children._Mypair._Myval2._Myfirst" />
+        <Variable Name="counter" InitialValue="0" />
+
+        <Size>children._Mypair._Myval2._Mylast - children._Mypair._Myval2._Myfirst</Size>
+        <Loop>
+          <Break Condition="current == children._Mypair._Myval2._Mylast" />
+          <If Condition="current->_Which == 1">
+            <Item Name="[{counter}]">current->_Tail._Head,na</Item>
+          </If>
+          <If Condition="current->_Which == 0">
+            <Item Name="[{counter}]">current->_Head._Ptr,na</Item>
+          </If>
+          <Exec>++current</Exec>
+          <Exec>++counter</Exec>
+        </Loop>
+      </CustomListItems>
+    </Expand>
+  </Type>
+
+  <Type Name="myrt::xgl::function">
+    <DisplayString>{{ {name,na} -> {return_type->first,na} }}</DisplayString>
+    <Expand>
+      <Item Name="name">name,na</Item>
+      <Item Name="return_type">return_type->first,na</Item>
+      <CustomListItems MaxItemsPerView="50">
+        <Variable Name="current" InitialValue="parameters._Mypair._Myval2._Myfirst" />
+        <Variable Name="counter" InitialValue="0" />
+
+        <Size>parameters._Mypair._Myval2._Mylast - parameters._Mypair._Myval2._Myfirst</Size>
+        <Loop>
+          <Break Condition="current == parameters._Mypair._Myval2._Mylast" />
+          <Item Name="[parameter {counter}] {current->name._Value._Ptr->text,na}">current,na</Item>
+          <Exec>++current</Exec>
+          <Exec>++counter</Exec>
+        </Loop>
+      </CustomListItems>
+      <Item Name="body" Condition="body._Has_value">body._Value</Item>
+    </Expand>
+  </Type>
+
+  <Type Name="myrt::xgl::variable">
+    <DisplayString>{{ name={name._Value._Ptr->text,na}, type={type->first,na} }}</DisplayString>
+    <Expand>
+      <Item Name="name">name._Value._Ptr->text,na</Item>
+      <Item Name="type">type->first,na</Item>
+      <Item Name="array_size" Condition="array_size._Has_value">array_size._Value</Item>
+      <Item Name="array_size" Condition="!array_size._Has_value">"none"</Item>
+      <Item Name="value" Condition="value._Has_value">value._Value</Item>
+    
+      <CustomListItems MaxItemsPerView="50">
+        <Variable Name="current" InitialValue="attributes._Mypair._Myval2._Myfirst" />
+        <Variable Name="counter" InitialValue="0" />
+
+        <Size>attributes._Mypair._Myval2._Mylast - attributes._Mypair._Myval2._Myfirst</Size>
+        <Loop>
+          <Break Condition="current == attributes._Mypair._Myval2._Mylast" />
+            <Item Name="[decorator {counter}]">*current,na</Item>
+          <Exec>++current</Exec>
+          <Exec>++counter</Exec>
+        </Loop>
+      </CustomListItems>
+    </Expand>
+  </Type>
+
+  <Type Name="myrt::xgl::expression">
+    <DisplayString Condition="token._Has_value">{{ name={token._Value->text, na}, precedence={precedence} }}</DisplayString>
+    <DisplayString Condition="string_name._Has_value">{{ operator={string_name._Value, na}, precedence={precedence} }}</DisplayString>
+    <Expand>
+      <Item Condition="result_type._Has_value" Name="result_type">result_type._Value->second</Item>
+      <Item Condition="!result_type._Has_value" Name="result_type">"n.A."</Item>
+      <Item Condition="token._Has_value" Name="name">token._Value->text, na</Item>
+      <Item Condition="string_name._Has_value" Name="name">string_name._Value</Item>
+      <Item Condition="function._Has_value" Name="function">function._Value->second</Item>
+      <Item Name="precedence">precedence</Item>
+
+      <CustomListItems MaxItemsPerView="50">
+        <Variable Name="current" InitialValue="parameters._Mypair._Myval2._Myfirst" />
+        <Variable Name="counter" InitialValue="0" />
+
+        <Size>parameters._Mypair._Myval2._Mylast - parameters._Mypair._Myval2._Myfirst</Size>
+        <Loop>
+          <Break Condition="current == parameters._Mypair._Myval2._Mylast" />
+          <Item Name="[parameter {counter}]">*current,na</Item>
+          <Exec>++current</Exec>
+          <Exec>++counter</Exec>
+        </Loop>
+      </CustomListItems>
+    </Expand>
+  </Type>
+</AutoVisualizer>

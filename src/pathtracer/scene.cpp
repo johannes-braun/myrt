@@ -1,6 +1,7 @@
 #include "scene.hpp"
 #include <algorithm>
 #include "material.hpp"
+#include <mygl/mygl.hpp>
 
 namespace myrt
 {
@@ -40,7 +41,7 @@ namespace myrt
 
   scene::~scene()
   {
-    glDeleteBuffers(number_of_buffers, reinterpret_cast<GLuint*>(&m_scene_buffers));
+    glDeleteBuffers(number_of_buffers, reinterpret_cast<std::uint32_t*>(&m_scene_buffers));
     for (auto const& geometry : m_available_geometries)
     {
       geometry->scene = nullptr;
@@ -53,7 +54,8 @@ namespace myrt
         .bvh_node_base_index = static_cast<index_type>(m_bvh_nodes.size()),
         .bvh_index_base_index = static_cast<index_type>(m_bvh_indices.size()),
         .indices_base_index = static_cast<index_type>(m_indices.size()),
-        .points_base_index = static_cast<index_type>(m_vertices.size())
+        .points_base_index = static_cast<index_type>(m_vertices.size()),
+        .index_count = static_cast<index_type>(indices.size())
     };
 
     m_indices.insert(m_indices.end(), indices.begin(), indices.end());
@@ -244,7 +246,7 @@ namespace myrt
   }
 
   scene::scene() {
-    glCreateBuffers(number_of_buffers, reinterpret_cast<GLuint*>(&m_scene_buffers));
+    glCreateBuffers(number_of_buffers, reinterpret_cast<std::uint32_t*>(&m_scene_buffers));
 
    /* m_default_material = push_material(material_info_t{
         .albedo_rgba = rnu::vec4ui8(255, 0, 255, 255),
@@ -317,7 +319,7 @@ namespace myrt
   {
     if (!m_global_bvh && !m_drawables.empty())
     {
-      m_global_bvh = std::make_unique<bvh>(m_drawable_aabbs, dont_split);
+      m_global_bvh = std::make_unique<bvh>(m_drawable_aabbs, split_aabbs);
     }
     std::optional<hit> h = std::nullopt;
 

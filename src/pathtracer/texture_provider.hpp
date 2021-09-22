@@ -3,7 +3,7 @@
 #include <compare>
 #include <memory>
 #include <map>
-#include "glad/glad.h"
+#include <mygl/mygl.hpp>
 
 namespace myrt
 {
@@ -26,10 +26,10 @@ namespace myrt
         friend class texture_provider_t;
         void lock() { m_locked_in_frame = true; m_reserved_in_frame = true; }
         void unlock() { m_locked_in_frame = false; }
-        GLuint id() const { return m_id; }
+        std::uint32_t id() const { return m_id; }
 
     private:
-        GLuint m_id;
+        std::uint32_t m_id;
         bool m_reserved_in_frame = false;
         bool m_locked_in_frame = false;
     };
@@ -42,7 +42,7 @@ namespace myrt
         std::shared_ptr<texture_t> get(GLenum target, GLenum fmt, int w, int h, int layers);
         std::shared_ptr<texture_t> get(GLenum target, GLenum fmt, int w, int h, int d, int layers);
         std::shared_ptr<texture_t> get_ms(GLenum target, GLenum fmt, int w, int h, int samples);
-        std::shared_ptr<texture_t> find(GLuint id);
+        std::shared_ptr<texture_t> find(std::uint32_t id);
 
     private:
         std::shared_ptr<texture_t> get_from(texture_info_t info);

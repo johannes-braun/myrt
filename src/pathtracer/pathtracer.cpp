@@ -1,7 +1,7 @@
 #include "pathtracer.hpp"
 #include "bvh.hpp"
 #include <sstream>
-#include "utils.hpp"
+#include <myrt/sfml/utils.hpp>
 #include <glsp/preprocess.hpp>
 
 #include <SFML/Window/Context.hpp>
@@ -24,16 +24,16 @@ namespace myrt
       return false;
     }
 
-    [[nodiscard]] GLuint get_framebuffer_texture(GLuint fbo, GLenum attachment)
+    [[nodiscard]] std::uint32_t get_framebuffer_texture(std::uint32_t fbo, GLenum attachment)
     {
-      GLint texture{};
+      std::int32_t texture{};
       glGetNamedFramebufferAttachmentParameteriv(fbo, attachment, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &texture);
-      return static_cast<GLuint>(texture);
+      return static_cast<std::uint32_t>(texture);
     }
-    [[nodiscard]] std::pair<GLint, GLint> get_framebuffer_size(GLuint fbo, GLenum attachment)
+    [[nodiscard]] std::pair<std::int32_t, std::int32_t> get_framebuffer_size(std::uint32_t fbo, GLenum attachment)
     {
       const auto texture = get_framebuffer_texture(fbo, attachment);
-      std::pair<GLint, GLint> size;
+      std::pair<std::int32_t, std::int32_t> size;
       glGetTextureLevelParameteriv(texture, 0, GL_TEXTURE_WIDTH, &size.first);
       glGetTextureLevelParameteriv(texture, 0, GL_TEXTURE_HEIGHT, &size.second);
       return size;
@@ -50,7 +50,7 @@ namespace myrt
   {
     sample_internal(scene, 0, width, height);
   }
-  void pathtracer::sample_to_framebuffer(scene& scene, GLuint target_framebuffer, GLenum attachment)
+  void pathtracer::sample_to_framebuffer(scene& scene, std::uint32_t target_framebuffer, GLenum attachment)
   {
     const auto [width, height] = detail::get_framebuffer_size(target_framebuffer, attachment);
     sample_internal(scene, target_framebuffer, width, height);
@@ -108,7 +108,7 @@ namespace myrt
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, buffer_binding_sdf_drawable, scene.get_scene_buffers().sdf_drawable_buffer);
   }
 
-  void pathtracer::sample_internal(scene& scene, GLuint target_framebuffer, int width, int height)
+  void pathtracer::sample_internal(scene& scene, std::uint32_t target_framebuffer, int width, int height)
   {
     const std::uniform_int_distribution<unsigned> distribution{ 0, max_uniform_distribution_value };
 
@@ -188,7 +188,7 @@ namespace myrt
     glBindVertexArray(m_vertex_array);
     glUniformMatrix4fv(0, 1, false, inverse(m_projection_matrix).data());
     glUniformMatrix4fv(1, 1, false, inverse(m_view_matrix).data());
-    glUniform2f(2, GLfloat(width), GLfloat(height));
+    glUniform2f(2, float(width), float(height));
     glUniform1ui(3, distribution(m_random_engine));
     glUniform1i(4, m_sample_counter++);
     glUniform1i(9, m_max_bounces);
@@ -208,7 +208,7 @@ namespace myrt
     if (detail::set_if_different(m_projection_matrix, matrix))
       invalidate_counter();
   }
-  void pathtracer::set_bokeh_texture(std::optional<GLuint> bokeh)
+  void pathtracer::set_bokeh_texture(std::optional<std::uint32_t> bokeh)
   {
     if (detail::set_if_different(m_bokeh, bokeh.has_value() ? bokeh.value() : 0))
       invalidate_counter();
@@ -270,7 +270,7 @@ namespace myrt
     std::vector<float> random_texture_data(random_number_count);
     std::uniform_real_distribution<float> distribution(0.f, 1.f);
     std::generate(random_texture_data.begin(), random_texture_data.end(), [&] {return distribution(m_random_engine); });
-    glTextureSubImage1D(m_random_texture->id(), 0, 0, GLsizei(random_texture_data.size()), GL_RED, GL_FLOAT, random_texture_data.data());
+    glTextureSubImage1D(m_random_texture->id(), 0, 0, std::int32_t(random_texture_data.size()), GL_RED, GL_FLOAT, random_texture_data.data());
   }
   void pathtracer::deinitialize()
   {
