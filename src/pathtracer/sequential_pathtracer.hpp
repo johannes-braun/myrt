@@ -23,7 +23,7 @@ namespace myrt {
   public:
     static constexpr std::uint32_t linear_group_size = 64;
 
-    void run(scene& scene, int width, int height);
+    std::shared_ptr<texture_t> run(texture_provider_t& provider, scene& scene, int width, int height);
 
     void set_view_matrix(rnu::mat4 const& matrix);
     void set_projection_matrix(rnu::mat4 const& matrix);
@@ -33,6 +33,19 @@ namespace myrt {
     void set_bokeh_mask(std::uint32_t bokeh_texture);
     void set_cubemap(std::uint32_t map, std::uint32_t sampler);
     void set_num_bounces(int num_bounces);
+    void set_sdf_marching_steps(float steps);
+    void set_sdf_marching_epsilon(float eps);
+
+    rnu::mat4 const& get_view_matrix();
+    rnu::mat4 const& get_projection_matrix();
+    bool get_dof_enabled();
+    rnu::vec2 get_lens_size();
+    float get_focus();
+    std::uint32_t get_bokeh_mask();
+    std::pair<std::uint32_t, std::uint32_t> get_cubemap();
+    int get_num_bounces();
+    float get_sdf_marching_steps();
+    float get_sdf_marching_epsilon();
 
     std::uint32_t sample_count() const;
 
@@ -43,9 +56,6 @@ namespace myrt {
 
     std::uint32_t color_texture_id() const;
     std::uint32_t debug_texture_id() const;
-
-    texture_provider_t& texture_provider();
-    texture_provider_t const& texture_provider() const;
 
   private:
     struct generate_output_t {
@@ -108,19 +118,23 @@ namespace myrt {
     std::uint32_t m_filter_control_buffer = 0;
     std::uint32_t m_filter_control_buffer_target = 0;
 
-    texture_provider_t m_texture_provider;
+    texture_provider_t* m_texture_provider;
 
     rnu::mat4 m_camera_view;
     rnu::mat4 m_camera_projection;
     rnu::mat4 m_inverse_camera_view;
     rnu::mat4 m_inverse_camera_projection;
-    bool m_dof_active = false;
     rnu::vec2ui m_image_size;
     std::vector<float> m_random_texture_data;
     std::shared_ptr<texture_t> m_random_texture;
+
+    bool m_dof_active = false;
     rnu::vec2 m_lens_size = { 10, 10 };
     float m_focus = 10.0f;
     int m_num_bounces = 10;
+    float m_sdf_marching_steps = 400;
+    float m_sdf_marching_epsilon = 1e-5;
+
 
     std::uint32_t m_bokeh_texture = 0;
     std::uint32_t m_cubemap = 0;

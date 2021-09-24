@@ -62,12 +62,12 @@ int sdf_index_current = 0;
 // "n" surface normal at "p"
 // "k" controls the sharpness of the blending in the transitions areas
 // "s" texture sampler
-vec4 sample_texture(in sampler2D s, in vec3 p, in vec3 n, in float k)
+vec2 sample_texture(in vec3 p, in vec3 n, in float k)
 {
   // project+fetch
-  vec4 x = texture(s, p.yz);
-  vec4 y = texture(s, p.zx);
-  vec4 z = texture(s, p.xy);
+  vec2 x = p.yz;
+  vec2 y = p.zx;
+  vec2 z = p.xy;
 
   // blend factors
   vec3 w = pow(abs(n), vec3(k));
@@ -97,14 +97,14 @@ float map(vec3 p, inout _MT material, bool writeMaterial)
    return map(p, material);
 }
 
-vec3 nor(vec3 p, inout _MT mat)
+vec3 nor(vec3 p, float len, inout _MT mat)
 {
   _MT dum;
   vec3 n = vec3(0.0);
   for (int i = DONT_OPTIMIZE_ZERO; i < 4; i++)
   {
     vec3 e = 0.5773 * (2.0 * vec3((((i + 3) >> 1) & 1), ((i >> 1) & 1), (i & 1)) - 1.0);
-    n += e * map(p + 0.0005 * e, dum, true).x;
+    n += e * map(p + 0.0005 * e / len, dum, true).x * len;
   }
   g_point = p;
   g_point_normal = normalize(n);
@@ -118,21 +118,32 @@ hit_t march_sdf(vec3 ro, vec3 rd, float tmax, bool hits_only, int steps, float e
   g_do_load_materials = false;
   drawable_sdf_t sdf = sdf_drawables[sdf_current];
   sdf_index_current = sdf.sdf_index;
+
+  vec3 oro = ro;
+  vec3 ord = rd;
+
   ro = (sdf.inverse_transformation * vec4(ro, 1)).xyz;
-  rd = (((sdf.inverse_transformation) * vec4(rd, 0)).xyz);
+  rd = ((sdf.inverse_transformation * vec4(rd, 0)).xyz);
+  float len = length(rd);
+  //rd = normalize(rd);
 
   float res = -1;
   float t = 10 * eps;
   _MT material;
-  for (int i = DONT_OPTIMIZE_ZERO; i < steps && t < tmax; i++)
+  int si = 0;
+  for (int i = DONT_OPTIMIZE_ZERO; i < steps && t / len < tmax; i++)
   {
-    float h = abs(map(ro + rd * t, material, true));
-    if (h < eps)
+    float m = map(ro + rd * t / len, material, true);
+    if(si == 0)
+      si = int(sign(m));
+
+    float h = (m);
+    if (abs(h) < eps)
     {
       res = t;
       break;
     }
-    t += h;
+    t += si * h;
   }
 
   if (res < 0)
@@ -148,10 +159,13 @@ hit_t march_sdf(vec3 ro, vec3 rd, float tmax, bool hits_only, int steps, float e
   if (hits_only)
     return hit;
 
-  hit.t = res;
-  hit.position = ro + t * rd;
+  hit.t = res / len;
+  hit.position = (vec4(oro + res / len * ord, 1)).xyz;
+
+  vec3 poas = ro + res * rd;
   _MT current_mat;
-  hit.normal = nor(hit.position, current_mat);
+  hit.normal = normalize((transpose(sdf.inverse_transformation) * vec4(nor(poas, len, current_mat), 0)).xyz);
+  hit.uv = sample_texture(poas, hit.normal, 0.5);
   hit.material_index = current_mat.index;
   return hit;
 }

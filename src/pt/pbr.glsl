@@ -149,7 +149,7 @@ void ggx_pbr_transmit_eval(material_info_t material, vec3 towards_view, vec3 tow
   float jacobian = ior2_by_den2 * abs(odoth);
 
   float cos_theta = (dot(microfacet_normal, normal));
-  result.pdf = max(0.001, cos_theta * ft);
+  result.pdf = cos_theta * ft;
   result.reflectance = color_get(material.albedo_rgba_unorm).rgb * result.pdf;
 }
 

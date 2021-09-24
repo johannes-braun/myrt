@@ -63,7 +63,7 @@ add_executable(myrt
     "src/pathtracer/forward_renderer.hpp"
     "src/pathtracer/forward_renderer.cpp" "src/pathtracer/sdf.cpp"  
 "src/ecs/ecs.cpp"
-"src/ecs/system.cpp")
+"src/ecs/system.cpp" )
 target_compile_features(myrt PUBLIC cxx_std_23)
 target_link_libraries(myrt PUBLIC myrt.sfml myrt.xgl)
 

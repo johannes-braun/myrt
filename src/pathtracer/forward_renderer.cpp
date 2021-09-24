@@ -10,9 +10,12 @@ namespace myrt
 {
   const static std::filesystem::path res_dir = "../../../res";
 
-  void forward_renderer::run(scene& scene, int width, int height)
+  std::shared_ptr<texture_t> forward_renderer::run(texture_provider_t& provider, scene& scene, int width, int height)
   {
     auto const prepare = scene.prepare();
+
+    if (!glIsFramebuffer(m_framebuffer))
+      glCreateFramebuffers(1, &m_framebuffer);
 
     if (prepare.drawables_changed)
     {
@@ -24,9 +27,26 @@ namespace myrt
       m_num_multidraws = size / sizeof(scene::drawable_geometry_t);
       glNamedBufferData(m_multidraw_buffer, m_num_multidraws * sizeof(multi_draw_indirect_t), nullptr, GL_DYNAMIC_DRAW);
     }
+    rnu::vec2ui const new_image_size(width, height);
+    if (std::ranges::any_of(m_image_size != new_image_size, [](bool b) { return b; })) {
+      m_image_size = new_image_size;
+      m_color_texture = nullptr;
+      m_depth_texture = nullptr;
+    }
+
+    if (!m_color_texture)
+      m_color_texture = provider.get(GL_TEXTURE_2D, GL_RGBA8, width, height, 1);
+    if (!m_depth_texture)
+      m_depth_texture = provider.get(GL_TEXTURE_2D, GL_DEPTH24_STENCIL8, width, height, 1);
+
+    glNamedFramebufferTexture(m_framebuffer, GL_COLOR_ATTACHMENT0, m_color_texture->id(), 0);
+    glNamedFramebufferTexture(m_framebuffer, GL_DEPTH_ATTACHMENT, m_depth_texture->id(), 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_framebuffer);
 
     pass_gen_multidraw(scene);
     pass_render(scene);
+
+    return m_color_texture;
   }
   void forward_renderer::set_view_matrix(rnu::mat4 const& matrix)
   {

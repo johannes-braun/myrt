@@ -7,8 +7,10 @@
 namespace myrt {
   const static std::filesystem::path res_dir = "../../../res";
 
-  void sequential_pathtracer::run(scene& scene, int width, int height)
+  std::shared_ptr<texture_t> sequential_pathtracer::run(
+      texture_provider_t& provider, scene& scene, int width, int height)
   {
+    m_texture_provider = &provider;
     rnu::vec2ui const new_image_size(width, height);
     if (std::ranges::any_of(m_image_size != new_image_size, [](bool b) { return b; }))
     {
@@ -17,11 +19,11 @@ namespace myrt {
     }
 
     if (!m_color_texture)
-      m_color_texture = m_texture_provider.get(GL_TEXTURE_2D, GL_RGBA32F, width, height, 1);
+      m_color_texture = m_texture_provider->get(GL_TEXTURE_2D, GL_RGBA32F, width, height, 1);
     if (!m_last_color_texture)
-      m_last_color_texture = m_texture_provider.get(GL_TEXTURE_2D, GL_RGBA32F, width, height, 1);
+      m_last_color_texture = m_texture_provider->get(GL_TEXTURE_2D, GL_RGBA32F, width, height, 1);
     if (!m_debug_texture)
-      m_debug_texture = m_texture_provider.get(GL_TEXTURE_2D, GL_RGBA32F, width, height, 1);
+      m_debug_texture = m_texture_provider->get(GL_TEXTURE_2D, GL_RGBA32F, width, height, 1);
 
     if (!glIsBuffer(m_filter_control_buffer))
     {
@@ -32,6 +34,23 @@ namespace myrt {
     {
       glCreateBuffers(1, &m_filter_control_buffer_target);
       glNamedBufferStorage(m_filter_control_buffer_target, sizeof(filter_access_t), nullptr, GL_DYNAMIC_STORAGE_BIT);
+    }
+
+    if (&scene != m_last_scene) {
+      glDeleteProgram(m_trace_shader);
+      invalidate_counter();
+      m_last_scene = &scene;
+    }
+
+    auto const prepare = scene.prepare();
+
+    if (prepare.drawables_changed || prepare.geometries_changed || prepare.materials_buffer_changed ||
+        prepare.sdf_buffer_changed)
+      invalidate_counter();
+
+    if (prepare.sdfs_changed || prepare.materials_changed) {
+      glDeleteProgram(m_trace_shader);
+      invalidate_counter();
     }
 
     pass_generate();
@@ -45,6 +64,8 @@ namespace myrt {
     pass_color(true, m_num_bounces);
 
     m_sample_counter++;
+
+    return m_color_texture;
   }
   void sequential_pathtracer::set_view_matrix(rnu::mat4 const& matrix)
   {
@@ -109,6 +130,48 @@ namespace myrt {
   {
     m_num_bounces = num_bounces;
   }
+  void sequential_pathtracer::set_sdf_marching_steps(float steps) {
+    if (steps != m_sdf_marching_steps) {
+      m_sdf_marching_steps = steps;
+      invalidate_counter();
+    }
+  }
+  void sequential_pathtracer::set_sdf_marching_epsilon(float eps) {
+    if (eps != m_sdf_marching_epsilon) {
+      m_sdf_marching_epsilon = eps;
+      invalidate_counter();
+    }
+  }
+  rnu::mat4 const& sequential_pathtracer::get_view_matrix() {
+    return m_camera_view;
+  }
+  rnu::mat4 const& sequential_pathtracer::get_projection_matrix() {
+    return m_camera_projection;
+  }
+  bool sequential_pathtracer::get_dof_enabled() {
+    return m_dof_active;
+  }
+  rnu::vec2 sequential_pathtracer::get_lens_size() {
+    return m_lens_size;
+  }
+  float sequential_pathtracer::get_focus() {
+    return m_focus;
+  }
+  std::uint32_t sequential_pathtracer::get_bokeh_mask() {
+    return m_bokeh_texture;
+  }
+  std::pair<std::uint32_t, std::uint32_t> sequential_pathtracer::get_cubemap() {
+    return {m_cubemap, m_cubemap_sampler};
+  }
+  int sequential_pathtracer::get_num_bounces() {
+    return m_num_bounces;
+  }
+  float sequential_pathtracer::get_sdf_marching_steps() {
+    return m_sdf_marching_steps;
+  }
+  float sequential_pathtracer::get_sdf_marching_epsilon() {
+    return m_sdf_marching_epsilon;
+  }
   std::uint32_t sequential_pathtracer::sample_count() const
   {
     return m_sample_counter;
@@ -172,16 +235,6 @@ namespace myrt {
     return m_debug_texture->id();
   }
 
-  texture_provider_t& sequential_pathtracer::texture_provider()
-  {
-    return m_texture_provider;
-  }
-
-  texture_provider_t const& sequential_pathtracer::texture_provider() const
-  {
-    return m_texture_provider;
-  }
-
   void sequential_pathtracer::create_generate_shader()
   {
     glsp::preprocess_file_info generate_file;
@@ -222,7 +275,7 @@ namespace myrt {
 
     if (!m_random_texture) {
       m_random_texture_data.resize(1024);
-      m_random_texture = m_texture_provider.get(GL_TEXTURE_1D, GL_R32F, int(m_random_texture_data.size()), 1);
+      m_random_texture = m_texture_provider->get(GL_TEXTURE_1D, GL_R32F, int(m_random_texture_data.size()), 1);
       m_random_texture->lock();
     }
   }
@@ -268,24 +321,6 @@ namespace myrt {
   {
     std::uniform_int_distribution<> dist;
 
-    if (&scene != m_last_scene)
-    {
-      glDeleteProgram(m_trace_shader);
-      invalidate_counter();
-      m_last_scene = &scene;
-    }
-
-    auto const prepare = scene.prepare();
-
-    if (prepare.drawables_changed || prepare.geometries_changed || prepare.materials_buffer_changed || prepare.sdf_buffer_changed)
-      invalidate_counter();
-
-    if (prepare.sdfs_changed || prepare.materials_changed)
-    {
-      glDeleteProgram(m_trace_shader);
-      invalidate_counter();
-    }
-
     if (!glIsProgram(m_trace_shader))
       create_trace_shader(scene);
 
@@ -314,8 +349,8 @@ namespace myrt {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_trace_bindings.sdf_data, scene.get_scene_buffers().sdf_data_buffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_trace_bindings.sdf_drawables, scene.get_scene_buffers().sdf_drawable_buffer);
 
-    glUniform1i(m_trace_bindings.sdf_marching_steps, 400);
-    glUniform1f(m_trace_bindings.sdf_marching_epsilon, 1e-5f);
+    glUniform1i(m_trace_bindings.sdf_marching_steps, m_sdf_marching_steps);
+    glUniform1f(m_trace_bindings.sdf_marching_epsilon, m_sdf_marching_epsilon);
 
     glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, m_filter_control_buffer);
     glDispatchComputeIndirect(offsetof(filter_access_t, num_groups_x));

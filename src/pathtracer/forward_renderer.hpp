@@ -1,5 +1,6 @@
 #pragma once
 #include "scene.hpp"
+#include "texture_provider.hpp"
 
 namespace myrt
 {
@@ -17,7 +18,7 @@ namespace myrt
       uint pad[3];
     };
   public:
-    void run(scene& scene, int width, int height);
+    std::shared_ptr<texture_t> run(texture_provider_t& provider, scene& scene, int width, int height);
     void set_view_matrix(rnu::mat4 const& matrix);
     void set_projection_matrix(rnu::mat4 const& matrix);
 
@@ -45,7 +46,12 @@ namespace myrt
     rnu::mat4 m_view;
     rnu::mat4 m_projection;
 
+    std::uint32_t m_framebuffer;
     std::uint32_t m_vertex_array;
+
+    std::shared_ptr<texture_t> m_color_texture;
+    std::shared_ptr<texture_t> m_depth_texture;
+    rnu::vec2ui m_image_size;
 
     struct {
       std::int32_t geometries;

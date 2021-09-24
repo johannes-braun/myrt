@@ -36,8 +36,8 @@ bool MYRT_BVH_TRAVERSE(MYRT_INDEX_TYPE node_base_index,
                 ro, inv_rd, maxt, t_right);
             if (!hits_left && !hits_right)
                 break;
-            bool use_right = t_left >= t_right;
-            left_right_stack = UINT_TYPE(t_left >= t_right) | (left_right_stack << UINT_TYPE(1));
+            bool use_right = !hits_left || (hits_right && t_left >= t_right);
+            left_right_stack = UINT_TYPE(use_right) | (left_right_stack << UINT_TYPE(1));
             visited_stack = UINT_TYPE(hits_left && hits_right) | (visited_stack << UINT_TYPE(1));
             node_index = (use_right ? current.second_child : current.first_child) + node_base_index;
             current = MYRT_BVH_NODES_BUFFER[node_index];

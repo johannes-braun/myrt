@@ -8,7 +8,7 @@ namespace myrt
   {
   public:
     float exponent = 10;
-    float strength = 0.05;
+    float strength = 0.05f;
 
     std::shared_ptr<texture_t> process(texture_provider_t& provider, std::uint32_t texture);
 

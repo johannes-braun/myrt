@@ -111,7 +111,7 @@ auto pbr_material_glsl = std::string("#include <pbr.glsl>\n") +
                                sampler2D albedo_texture = sampler2D(material_state.albedo_texture);
                                if (material_state.albedo_texture != uvec2(0))
                                  material_state.mat.albedo_rgba_unorm =
-                                     color_make(textureLod(albedo_texture, vec2(uv.x, 1 - uv.y), 0));
+                                     color_make(pow(textureLod(albedo_texture, vec2(uv.x, 1 - uv.y), 0), vec4(2.2)));
                                material_state.is_incoming = dot(normal, -towards_viewer) < 0;
                                material_state.ior1 = material_state.is_incoming ? 1.0 : material_state.mat.ior;
                                material_state.ior2 = material_state.is_incoming ? material_state.mat.ior : 1.0;
@@ -242,29 +242,70 @@ int main(int argc, char** argv) {
   render_thread.request_stop();
 }
 
-struct obj : myrt::component<obj> {
-  std::variant<myrt::geometric_object, myrt::sdf_object> object;
+struct object_component : myrt::component<object_component> {
+  std::variant<myrt::geometric_object, myrt::sdf_object, std::vector<myrt::geometric_object>> object;
 };
 
-struct geo_ui : myrt::component<geo_ui> {};
+struct transform_component : myrt::component<transform_component> {
+  rnu::vec3 position;
+  rnu::vec3 scale{1};
+  rnu::quat orientation;
 
-struct geo_ui_system : public myrt::system {
-public:
-  geo_ui_system() {
-    add_component_type(obj::id);
-    add_component_type(geo_ui::id);
+  constexpr rnu::mat4 matrix() const {
+    return rnu::translation(position) * rnu::mat4(orientation.matrix()) * rnu::scale(scale);
   }
+};
 
-  void update(duration_type delta, myrt::component_base** components) const override {
-    auto& o = components[0]->as<obj>();
-    auto& ui = components[1]->as<geo_ui>();
+struct object_ui_component : myrt::component<object_ui_component> {};
 
-    auto& obj = std::get<myrt::geometric_object>(o.object);
-
-    if (ImGui::Begin("Geometric Objects")) {
+struct make_ui_t {
+  bool operator()(std::vector<myrt::geometric_object>& obj) const {
+    auto const begin = ImGui::Begin("Geometric Objects");
+    if (begin) {
+      ImGui::PushID(&obj);
+      for (auto& o : obj) {
+        ImGui::PushID(o.name.c_str());
+        ImGui::LabelText("Name", "%s", o.name.c_str());
+        ImGui::Checkbox("Show", &o.show);
+        ImGui::PopID();
+      }
+    }
+    return begin;
+  }
+  bool operator()(myrt::geometric_object& obj) const {
+    auto const begin = ImGui::Begin("Geometric Objects");
+    if (begin) {
       ImGui::PushID(obj.name.c_str());
       ImGui::LabelText("Name", "%s", obj.name.c_str());
       ImGui::Checkbox("Show", &obj.show);
+    }
+    return begin;
+  }
+
+  bool operator()(myrt::sdf_object& obj) const {
+    auto const begin = ImGui::Begin("SDF Objects");
+    if (begin) {
+      ImGui::PushID(obj.name.c_str());
+      ImGui::LabelText("Name", "%s", obj.name.c_str());
+      ImGui::Checkbox("Show", &obj.show);
+    }
+    return begin;
+  }
+};
+
+struct object_ui_system : public myrt::typed_system<object_component, object_ui_component, transform_component> {
+public:
+  void update(
+      duration_type delta, object_component* o, object_ui_component* ui, transform_component* t) const override {
+    if (std::visit(make_ui_t{}, o->object)) {
+      ImGui::BeginGroup();
+      ImGui::Text("Transform");
+      ImGui::DragFloat3("Position", t->position.data(), 0.01f);
+      ImGui::DragFloat3("Scale", t->scale.data(), 0.01f);
+      ImGui::DragFloat4("Orientation", t->orientation.data(), 0.01f);
+      t->orientation = normalize(t->orientation);
+      ImGui::EndGroup();
+
       ImGui::Separator();
       ImGui::PopID();
       ImGui::End();
@@ -272,15 +313,104 @@ public:
   }
 };
 
-struct obj_system : public myrt::system {
-public:
-  obj_system() {
-    add_component_type(obj::id);
-  }
-  void update(duration_type delta, myrt::component_base** components) const override {
-    auto& o = components[0]->as<obj>();
+struct draw_t {
+  transform_component* t;
 
-    std::visit([](auto& object) { object.enqueue(); }, o.object);
+  void operator()(std::vector<myrt::geometric_object>& obj) const {
+    auto pm = t->matrix();
+    for (auto& o : obj) {
+      o.enqueue(pm);
+    }
+  }
+
+  template <typename T> void operator()(T&& obj) const {
+    obj.enqueue(t->matrix());
+  }
+};
+
+struct object_system : public myrt::typed_system<object_component, transform_component> {
+public:
+  void update(duration_type delta, object_component* o, transform_component* t) const override {
+    std::visit(draw_t{.t = t}, o->object);
+  }
+};
+
+struct camera_component : myrt::component<camera_component> {
+  rnu::cameraf camera;
+  rnu::mat4 projection;
+  std::uint32_t width;
+  std::uint32_t height;
+};
+
+struct renderer_component : myrt::component<renderer_component> {
+  myrt::scene* scene;
+  myrt::texture_provider_t* provider;
+  std::variant<myrt::sequential_pathtracer*, myrt::forward_renderer*> renderer;
+  std::shared_ptr<myrt::texture_t> render_target;
+};
+
+struct render_system : public myrt::typed_system<camera_component, renderer_component> {
+public:
+  void update(duration_type delta, camera_component* o, renderer_component* r) const override {
+    if (!r->scene)
+      return;
+
+    r->render_target = std::visit(
+        [&](auto* object) {
+          object->set_view_matrix(o->camera.matrix(false));
+          object->set_projection_matrix(o->projection);
+          return object->run(*r->provider, *r->scene, o->width, o->height);
+        },
+        r->renderer);
+  }
+};
+
+struct renderer_ui_component : myrt::component<renderer_ui_component> {};
+
+struct make_renderer_ui {
+  double dt;
+
+  void operator()(myrt::sequential_pathtracer* pt) {
+    if (ImGui::Begin("Pathtracer")) {
+      ImGui::Text("Samples: %d (%.00f sps)", pt->sample_count(), 1.f / dt);
+      if (ImGui::Button("Reload Shaders"))
+        pt->invalidate_shaders();
+      if (ImGui::Button("Reload Trace Shader"))
+        pt->invalidate_shader(myrt::shader_flags::trace);
+      if (ImGui::Button("Reload Color Shader"))
+        pt->invalidate_shader(myrt::shader_flags::color);
+
+      ImGui::Separator();
+
+      if (auto x = pt->get_dof_enabled(); ImGui::Checkbox("DOF", &x))
+        pt->set_dof_enabled(x);
+
+      if (auto x = pt->get_lens_size(); ImGui::DragFloat2("Lens Size", x.data(), 0.001f, 0.0f, 10000.f))
+        pt->set_lens_size(x);
+
+      if (auto x = pt->get_focus(); ImGui::DragFloat("Focus", &x, 0.001f, 0.0f, 10000.f))
+        pt->set_focus(x);
+
+      if (auto x = pt->get_sdf_marching_steps(); ImGui::DragFloat("SDF Steps", &x, 0.01f, 0.0f, 10000.f))
+        pt->set_sdf_marching_steps(x);
+
+      if (auto x = pt->get_sdf_marching_epsilon();
+          ImGui::DragFloat("SDF Epsilon", &x, 0.0000001f, 0.0f, 10000.f, "%.8f"))
+        pt->set_sdf_marching_epsilon(x);
+
+      if (auto x = pt->get_num_bounces(); ImGui::DragInt("Bounces", &x, 0.01f, 0, 20))
+        pt->set_num_bounces(x);
+
+      ImGui::End();
+    }
+  }
+  void operator()(myrt::forward_renderer* fwd) {}
+};
+
+struct renderer_ui_system : public myrt::typed_system<renderer_component, renderer_ui_component> {
+public:
+  virtual void update(duration_type delta, renderer_component* r, renderer_ui_component* ui) const override {
+    std::visit(make_renderer_ui{.dt = delta.count()}, r->renderer);
   }
 };
 
@@ -290,33 +420,48 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
   std::format_to(std::ostreambuf_iterator(std::cout), "{} starting...", "Rendering");
 
   myrt::scene scene;
+  myrt::sequential_pathtracer pathtracer_renderer;
+  myrt::forward_renderer forward_renderer;
+
+  pathtracer_renderer.set_dof_enabled(true);
+  pathtracer_renderer.set_lens_size({0.2, 0.2});
+  pathtracer_renderer.set_focus(focus);
+  pathtracer_renderer.set_bokeh_mask(load_bokeh());
+
   myrt::ecs ecs;
   std::vector<myrt::entity> entities;
 
-  obj_system object_system;
-  geo_ui_system geo_ui_system;
+  object_system object_system;
+  object_ui_system geo_ui_system;
+  render_system render_system;
+  renderer_ui_system render_ui_system;
+
   myrt::system_list systems;
   systems.add(object_system);
   systems.add(geo_ui_system);
+  systems.add(render_system);
+  systems.add(render_ui_system);
 
-  myrt::sequential_pathtracer seq_pt;
-  myrt::forward_renderer renderer;
+  myrt::texture_provider_t global_texture_provider;
+  auto const render_entity =
+      ecs.create_entity_unique(camera_component{}, renderer_component{}, renderer_ui_component{});
+  auto* rc = render_entity->get<renderer_component>();
+  rc->provider = &global_texture_provider;
+  rc->renderer = &forward_renderer;
+  rc->scene = &scene;
 
-  rnu::cameraf camera(rnu::vec3{0.0f, 0.0f, -15.f});
+  render_entity->get<camera_component>()->camera = {rnu::vec3{0.0f, 0.0f, 15.f}};
 
-  for (auto const& obj : load_object_file(scene, "fischl/fischl.obj", 10)) {
-    ::obj o;
-    o.object = obj;
-    entities.push_back(ecs.create_entity(std::move(o), geo_ui{}));
-  }
+  auto const import_scale = 10;
 
-  // std::vector<myrt::geometric_object> objects_resource(load_object_file(scene, "kuhbus.obj", 4));
+  entities.push_back(
+      ecs.create_entity(object_component{.object = load_object_file(scene, "mona.obj", import_scale)},
+          transform_component{}, object_ui_component{}));
+
   myrt::async_resource<std::pair<std::uint32_t, std::uint32_t>> cube_resource(loading_pool, [] {
     sf::Context context;
     return load_cubemap("gamrig");
   });
-
-  std::uint32_t bokeh = load_bokeh();
 
   {
     myrt::sdf_object abstract_art_sdf;
@@ -339,10 +484,8 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
     abstract_art_sdf.set(capsule.get_parameter(capsule.material), 1);
     abstract_art_sdf.set(sphere.get_parameter(sphere.material), 2);
 
-    obj o;
-    o.object = std::move(abstract_art_sdf);
-
-    entities.push_back(ecs.create_entity(std::move(o)));
+    entities.push_back(ecs.create_entity(object_component{.object = std::move(abstract_art_sdf)},
+        transform_component{.scale = {1}}, object_ui_component{}));
   }
 
   bool cubemap_enabled = false;
@@ -355,7 +498,6 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
   int march_eps_exp = 6;
   float march_eps_fac = 0.75f;
 
-  bool show_debug = false;
   bool outlined = true;
 
   float pg_sphere_radius = 3;
@@ -373,71 +515,81 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
   for (auto frame : myrt::gl::next_frame(*window)) {
     if (stop_token.stop_requested())
       break;
+    global_texture_provider.new_frame();
+    rnu::vec2i size(window->getSize().x, window->getSize().y);
+
+    {
+      render_entity->get<camera_component>()->width = size.x;
+      render_entity->get<camera_component>()->height = size.y;
+      render_entity->get<camera_component>()->projection = rnu::cameraf::projection(
+          rnu::radians(70), float(window->getSize().x) / float(window->getSize().y), 0.01f, 1000.f, true);
+
+      if (window->hasFocus() && !ImGui::GetIO().WantCaptureKeyboard) {
+        render_entity->get<camera_component>()->camera.axis(
+            float(frame.delta_time.count()) * (1.f + 5 * sf::Keyboard::isKeyPressed(sf::Keyboard::LShift)),
+            sf::Keyboard::isKeyPressed(sf::Keyboard::W), sf::Keyboard::isKeyPressed(sf::Keyboard::S),
+            sf::Keyboard::isKeyPressed(sf::Keyboard::A), sf::Keyboard::isKeyPressed(sf::Keyboard::D),
+            sf::Keyboard::isKeyPressed(sf::Keyboard::E), sf::Keyboard::isKeyPressed(sf::Keyboard::Q));
+      }
+      if (window->hasFocus() && !ImGui::GetIO().WantCaptureMouse) {
+        render_entity->get<camera_component>()->camera.mouse(float(sf::Mouse::getPosition(*window).x),
+            float(sf::Mouse::getPosition(*window).y), sf::Mouse::isButtonPressed(sf::Mouse::Left));
+      }
+    }
+
+    if (outlined)
+      render_entity->get<renderer_component>()->renderer = &forward_renderer;
+    else
+      render_entity->get<renderer_component>()->renderer = &pathtracer_renderer;
 
     ecs.update(frame.delta_time, systems);
 
-    if (window->hasFocus() && !ImGui::GetIO().WantCaptureKeyboard) {
-      camera.axis(float(frame.delta_time.count()) * (1.f + 5 * sf::Keyboard::isKeyPressed(sf::Keyboard::LShift)),
-          sf::Keyboard::isKeyPressed(sf::Keyboard::W), sf::Keyboard::isKeyPressed(sf::Keyboard::S),
-          sf::Keyboard::isKeyPressed(sf::Keyboard::A), sf::Keyboard::isKeyPressed(sf::Keyboard::D),
-          sf::Keyboard::isKeyPressed(sf::Keyboard::E), sf::Keyboard::isKeyPressed(sf::Keyboard::Q));
+    if (sf::Mouse::isButtonPressed(sf::Mouse::Button::Right)) {
+       
+      float mouseX = sf::Mouse::getPosition(*window).x / (size.x * 0.5f) - 1.0f;
+      float mouseY = sf::Mouse::getPosition(*window).y / (size.y * 0.5f) - 1.0f;
+
+      auto const K = render_entity->get<camera_component>()->camera.matrix(false); 
+      auto const ivp = inverse(render_entity->get<camera_component>()->projection * K);
+      rnu::vec2 tsize = size;
+
+      auto vd = ivp * rnu::vec4(mouseX, -mouseY, 1.f, 1.f);
+
+      myrt::ray_t ray{
+          .origin = render_entity->get<camera_component>()->camera.position(), .direction = normalize(rnu::vec3(vd)),
+      .length = std::numeric_limits<float>::max()};
+      auto picked = scene.pick(ray);
+      if (picked) {
+        scene.set_parameter(scene.materials()[picked->drawable->material_index], "metallic", 1.0f);
+        scene.set_parameter(scene.materials()[picked->drawable->material_index], "roughness", 0.22f);
+        scene.set_parameter(scene.materials()[picked->drawable->material_index], "albedo",
+            rnu::vec4(1.f, 0.4f, 0.1f, 1));
+        scene.set_parameter(scene.materials()[picked->drawable->material_index], "albedo_texture", rnu::vec2ui(0));
+        printf("Picked object: #%d at distance %.5f\n", picked->index, picked->t);
+      }
     }
-    if (window->hasFocus() && !ImGui::GetIO().WantCaptureMouse) {
-      camera.mouse(float(sf::Mouse::getPosition().x), float(sf::Mouse::getPosition().y),
-          sf::Mouse::isButtonPressed(sf::Mouse::Left));
-    }
 
-    auto view_matrix = camera.matrix(false);
-    auto proj_matrix = camera.projection(
-        rnu::radians(70), float(window->getSize().x) / float(window->getSize().y), 0.01f, 1000.f, true);
-
-    rnu::vec2i size(window->getSize().x, window->getSize().y);
-    if (!outlined) {
-      seq_pt.set_dof_enabled(true);
-      seq_pt.set_lens_size({0.2, 0.2});
-      // seq_pt.set_bokeh_mask(bokeh);
-      seq_pt.set_view_matrix(camera.matrix(false));
-      seq_pt.set_projection_matrix(camera.projection(
-          rnu::radians(70), float(window->getSize().x) / float(window->getSize().y), 0.01f, 1000.f, true));
-      seq_pt.set_focus(focus);
-      seq_pt.run(scene, size.x, size.y);
-
-      auto result = denoise.process(
-          seq_pt.texture_provider(), show_debug ? seq_pt.debug_texture_id() : seq_pt.color_texture_id());
-
-      glNamedFramebufferTexture(fbo, GL_COLOR_ATTACHMENT0,
-          result->id() /*show_debug ? seq_pt.debug_texture_id() : seq_pt.color_texture_id()*/, 0);
-      glBlitNamedFramebuffer(fbo, 0, 0, 0, size.x, size.y, 0, 0, size.x, size.y, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-    } else {
-      renderer.set_view_matrix(camera.matrix(false));
-      renderer.set_projection_matrix(camera.projection(
-          rnu::radians(70), float(window->getSize().x) / float(window->getSize().y), 0.01f, 1000.f, true));
-      renderer.run(scene, size.x, size.y);
-    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    auto result = render_entity->get<renderer_component>()->render_target;
+    result = denoise.process(global_texture_provider, result->id());
+    glNamedFramebufferTexture(fbo, GL_COLOR_ATTACHMENT0, result->id(), 0);
+    glBlitNamedFramebuffer(fbo, 0, 0, 0, size.x, size.y, 0, 0, size.x, size.y, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
     ImGui::Begin("Settings");
-    ImGui::Text("Samples: %d (%.00f sps)", seq_pt.sample_count(), 1.f / frame.delta_time.count());
-    if (ImGui::Checkbox("outlined", &outlined)) {
-      seq_pt.invalidate_counter();
-    }
-    ImGui::Checkbox("show_debug", &show_debug);
-    ImGui::Checkbox("Enable Cubemap", &cubemap_enabled);
-    if (ImGui::Button("Reload Shaders"))
-      seq_pt.invalidate_shaders();
-    if (ImGui::Button("Reload Trace Shader"))
-      seq_pt.invalidate_shader(myrt::shader_flags::trace);
-    if (ImGui::Button("Reload Color Shader"))
-      seq_pt.invalidate_shader(myrt::shader_flags::color);
 
     if (ImGui::CollapsingHeader("Denoise")) {
       ImGui::DragFloat("Exponent", &denoise.exponent, 0.001, -10.f, 10.f);
       ImGui::DragFloat("Strength", &denoise.strength, 0.001, -10.f, 10.f);
     }
+    if (ImGui::Checkbox("outlined", &outlined)) {
+      pathtracer_renderer.invalidate_counter();
+    }
+    ImGui::Checkbox("CUBEMPAP", &cubemap_enabled);
 
     if (cubemap_enabled)
-      cube_resource.current([&](auto const& cur) { seq_pt.set_cubemap(cur.first, cur.second); });
+      cube_resource.current([&](auto const& cur) { pathtracer_renderer.set_cubemap(cur.first, cur.second); });
     else
-      seq_pt.set_cubemap(0, 0);
+      pathtracer_renderer.set_cubemap(0, 0);
     ImGui::End();
   }
 }
@@ -455,7 +607,7 @@ template <residence Residence> auto ldr_texture(std::filesystem::path const& pat
   glTextureParameteri(texture, GL_TEXTURE_WRAP_T, GL_REPEAT);
 
   stbi::ldr_image image(path, 3);
-  glTextureStorage2D(texture, 1, GL_RGB565, image.width, image.height);
+  glTextureStorage2D(texture, 1, GL_RGB8, image.width, image.height);
   glTextureSubImage2D(texture, 0, 0, 0, image.width, image.height, GL_RGB, GL_UNSIGNED_BYTE, image.data.get());
   glGenerateTextureMipmap(texture);
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "component.hpp"
+#include "entity.hpp"
 #include "flags.hpp"
 #include <algorithm>
 #include <execution>
@@ -30,7 +31,7 @@ public:
   const std::vector<component_flags>& flags() const;
 
 protected:
-  template <typename T, typename = std::enable_if_t<std::is_convertible_v<T, component<T>>>>
+  template <traits::component_type T>
   void add_component_type(component_flags flags = {}) {
     add_component_type(T::id, flags);
   }
@@ -63,6 +64,25 @@ public:
 
 private:
   std::vector<std::reference_wrapper<system_base>> _systems;
+};
+
+template <traits::component_type... Components> struct typed_system : public system {
+public:
+  typed_system() {
+    (add_component_type<Components>(), ...);
+  }
+
+  virtual void update(duration_type delta, Components*... components) const = 0;
+
+  void update(duration_type delta, component_base** components) const final override {
+    update_impl(delta, components, std::make_index_sequence<sizeof...(Components)>{});
+  }
+
+private:
+  template <size_t... I>
+  void update_impl(duration_type delta, component_base** components, std::index_sequence<I...>) const {
+    update(delta, components[I]->as_ptr<Components>()...);
+  }
 };
 
 } // namespace myrt
