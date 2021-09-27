@@ -16,6 +16,8 @@
 #include "ecs/ecs.hpp"
 #include <format>
 
+#include <nlohmann/json.hpp>
+
 namespace stbi {
 template <typename T> struct deleter {
   void operator()(T* data) const {
@@ -414,10 +416,449 @@ public:
   }
 };
 
+struct parameter_type;
+struct parameter;
+
+struct constant_type {
+  std::string_view id;
+  std::string_view glsl_type;
+  std::string_view glsl_code;
+  size_t blocks;
+
+  void (*write)(float* dst, void const* src);
+  void (*read)(void* dst, float const* src);
+};
+
+enum class parameter_type_id : std::int64_t {
+  type_float,
+  type_int,
+  type_uint,
+  type_vec2,
+  type_vec3,
+  type_vec4,
+  type_vec4unorm8,
+  type_ivec2,
+  type_ivec3,
+  type_ivec4,
+  type_uvec2,
+  type_uvec3,
+  type_uvec4,
+  type_mat2,
+  type_mat3,
+  type_mat4,
+};
+
+namespace internal_types {
+constexpr static std::array registered_types{
+    constant_type{"float", "float", "return in0", 1, [](auto* d, auto const* s) { std::memcpy(d, s, sizeof(float)); },
+        [](auto* d, auto const* s) { std::memcpy(d, s, sizeof(float)); }},
+    constant_type{"int", "int", "return floatBitsToInt(in0)", 1,
+        [](auto* d, auto const* s) { std::memcpy(d, s, sizeof(std::int32_t)); },
+        [](auto* d, auto const* s) { std::memcpy(d, s, sizeof(std::int32_t)); }},
+    constant_type{"uint", "uint", "return floatBitsToUint(in0)", 1,
+        [](auto* d, auto const* s) { std::memcpy(d, s, sizeof(std::uint32_t)); },
+        [](auto* d, auto const* s) { std::memcpy(d, s, sizeof(std::uint32_t)); }},
+    constant_type{"vec2", "vec2", "return vec2(in0, in1)", 2,
+        [](auto* d, auto const* s) { std::memcpy(d, s, 2 * sizeof(float)); },
+        [](auto* d, auto const* s) { std::memcpy(d, s, 2 * sizeof(float)); }},
+    constant_type{"vec3", "vec3", "return vec3(in0, in1, in2)", 3,
+        [](auto* d, auto const* s) { std::memcpy(d, s, 3 * sizeof(float)); },
+        [](auto* d, auto const* s) { std::memcpy(d, s, 3 * sizeof(float)); }},
+    constant_type{"vec4", "vec4", "return vec4(in0, in1, in2, in3)", 4,
+        [](auto* d, auto const* s) { std::memcpy(d, s, 4 * sizeof(float)); },
+        [](auto* d, auto const* s) { std::memcpy(d, s, 4 * sizeof(float)); }},
+    constant_type{"vec4unorm8", "vec4", "return unpackUnorm4x8(floatBitsToUint(in0))", 1,
+        [](auto* d, auto const* s) { std::memcpy(d, s, sizeof(std::uint32_t)); },
+        [](auto* d, auto const* s) { std::memcpy(d, s, sizeof(std::uint32_t)); }},
+    constant_type{"ivec2", "ivec2", "return ivec2(floatBitsToInt(in0), floatBitsToInt(in1))", 2,
+        [](auto* d, auto const* s) { std::memcpy(d, s, 2 * sizeof(std::int32_t)); },
+        [](auto* d, auto const* s) { std::memcpy(d, s, 2 * sizeof(std::int32_t)); }},
+    constant_type{"ivec3", "ivec3", "return ivec3(floatBitsToInt(in0), floatBitsToInt(in1), floatBitsToInt(in2))", 3,
+        [](auto* d, auto const* s) { std::memcpy(d, s, 3 * sizeof(std::int32_t)); },
+        [](auto* d, auto const* s) { std::memcpy(d, s, 3 * sizeof(std::int32_t)); }},
+    constant_type{"ivec4", "ivec4",
+        "return ivec4(floatBitsToInt(in0), floatBitsToInt(in1), floatBitsToInt(in2), floatBitsToInt(in3))", 4,
+        [](auto* d, auto const* s) { std::memcpy(d, s, 4 * sizeof(std::int32_t)); },
+        [](auto* d, auto const* s) { std::memcpy(d, s, 4 * sizeof(std::int32_t)); }},
+    constant_type{"uvec2", "uvec2", "return uvec2(floatBitsToUint(in0), floatBitsToUint(in1))", 2,
+        [](auto* d, auto const* s) { std::memcpy(d, s, 2 * sizeof(std::uint32_t)); },
+        [](auto* d, auto const* s) { std::memcpy(d, s, 2 * sizeof(std::uint32_t)); }},
+    constant_type{"uvec3", "uvec3", "return uvec3(floatBitsToUint(in0), floatBitsToUint(in1), floatBitsToUint(in2))", 3,
+        [](auto* d, auto const* s) { std::memcpy(d, s, 3 * sizeof(std::uint32_t)); },
+        [](auto* d, auto const* s) { std::memcpy(d, s, 3 * sizeof(std::uint32_t)); }},
+    constant_type{"uvec4", "uvec4",
+        "return uvec4(floatBitsToUint(in0), floatBitsToUint(in1), floatBitsToUint(in2), floatBitsToUint(in3))", 4,
+        [](auto* d, auto const* s) { std::memcpy(d, s, 4 * sizeof(std::uint32_t)); },
+        [](auto* d, auto const* s) { std::memcpy(d, s, 4 * sizeof(std::uint32_t)); }},
+    constant_type{"mat2", "mat2", "return mat2(in0, in1, in2, in3)", 4,
+        [](auto* d, auto const* s) { std::memcpy(d, s, 4 * sizeof(float)); },
+        [](auto* d, auto const* s) { std::memcpy(d, s, 4 * sizeof(float)); }},
+    constant_type{"mat3", "mat3", "return mat3(in0, in1, in2, in3, in4, in5, in6, in7, in8, in9)", 9,
+        [](auto* d, auto const* s) { std::memcpy(d, s, 9 * sizeof(float)); },
+        [](auto* d, auto const* s) { std::memcpy(d, s, 9 * sizeof(float)); }},
+    constant_type{"mat4", "mat4",
+        "return mat4(in0, in1, in2, in3, in4, in5, in6, in7, in8, in9, in10, in11, in12, in13, in14, in15)", 16,
+        [](auto* d, auto const* s) { std::memcpy(d, s, 16 * sizeof(float)); },
+        [](auto* d, auto const* s) { std::memcpy(d, s, 16 * sizeof(float)); }}};
+
+constexpr std::string_view internal_load_identifier = "ldv"; // LoaD Value
+
+namespace generate_loaders {
+  template <size_t S> struct c_str { char string[S]; };
+
+  constexpr size_t log10(size_t v) {
+    size_t l = 1;
+    while (v /= 10) l++;
+    return l;
+  }
+  constexpr double powr(double x, int exp) {
+    int sign = 1;
+    if (exp < 0) {
+      sign = -1;
+      exp = -exp;
+    }
+    if (exp == 0)
+      return x < 0 ? -1.0 : 1.0;
+    double ret = x;
+    while (--exp) ret *= x;
+    return sign > 0 ? ret : 1.0 / ret;
+  }
+
+  template <size_t... I> constexpr size_t par_size(std::index_sequence<I...>) {
+    return ((std::size(",float in") - 1 + log10(I)) + ... + -1);
+  }
+  static_assert(par_size(std::make_index_sequence<4>{}) == std::size("float in0,float in1,float in2,float in3") - 1);
+
+  constexpr size_t type_str_len(size_t index, constant_type const& type) {
+    return type.glsl_code.length() + type.glsl_type.length() + 6 + internal_load_identifier.length() + log10(index);
+  }
+
+  constexpr void append(char** ptr_ptr, char c) {
+    char* ptr = *ptr_ptr;
+    *ptr = c;
+    *ptr_ptr += 1;
+  }
+
+  constexpr void append(char** ptr_ptr, std::string_view str) {
+    for (size_t i = 0; i < str.size(); ++i) append(ptr_ptr, str[i]);
+  }
+
+  constexpr void append_size_t(char** ptr_ptr, size_t s) {
+    auto const l10 = log10(s) - 1;
+    auto div = size_t(powr(10, l10));
+    do {
+      append(ptr_ptr, '0' + (s / div) % 10);
+    } while (div /= 10);
+  }
+
+  constexpr void insert(char*& ptr, size_t index, constant_type const& type) {
+    append(&ptr, type.glsl_type);
+    append(&ptr, ' ');
+    append(&ptr, internal_load_identifier);
+    append_size_t(&ptr, index);
+    append(&ptr, '(');
+    for (size_t pindex = 0; pindex < type.blocks; ++pindex) {
+      if (pindex != 0)
+        append(&ptr, ',');
+      append(&ptr, "float in");
+      append_size_t(&ptr, pindex);
+    }
+    append(&ptr, ')');
+    append(&ptr, '{');
+    append(&ptr, type.glsl_code);
+    append(&ptr, ";}");
+  }
+
+  template <size_t... I> constexpr auto build_loaders_impl(std::index_sequence<I...>) {
+    c_str<((par_size(std::make_index_sequence<registered_types[I].blocks>{}) + type_str_len(I, registered_types[I])) +
+           ... + 1)>
+        result{};
+
+    char* ptr = result.string;
+
+    (insert(ptr, I, registered_types[I]), ...);
+
+    return result;
+  }
+
+  constexpr auto build_loaders() {
+    return build_loaders_impl(std::make_index_sequence<std::size(registered_types)>{});
+  }
+
+  constexpr auto result = build_loaders();
+} // namespace generate_loaders
+
+constexpr std::string_view loader_glsl = {generate_loaders::result.string,
+    std::find((const char*)generate_loaders::result.string,
+        generate_loaders::result.string + std::size(generate_loaders::result.string), '\0')};
+
+constexpr std::optional<parameter_type_id> get_id(std::string_view identifier) {
+  auto const iter = std::find_if(
+      begin(registered_types), end(registered_types), [&](constant_type const& type) { return type.id == identifier; });
+  if (iter == end(registered_types))
+    return std::nullopt;
+  return parameter_type_id{std::distance(begin(registered_types), iter)};
+}
+constexpr constant_type const* get_type(parameter_type_id id) {
+  if (size_t(id) >= registered_types.size())
+    return nullptr;
+  return &registered_types[size_t(id)];
+}
+constexpr parameter_type_id get_id(constant_type const* type) {
+  return parameter_type_id{std::distance(data(registered_types), type)};
+}
+constexpr constant_type const* get_type(std::string_view identifier) {
+  auto const id = get_id(identifier);
+  if (!id)
+    return nullptr;
+  return get_type(*id);
+}
+}; // namespace internal_types
+
+struct object_host {
+  std::vector<float> m_buffer;
+};
+
+struct object_type {
+public:
+  friend std::string generate_object_loader(object_type const& obj);
+
+  object_type(std::string name) : m_name(std::move(name)) {}
+
+  std::string const& name() const noexcept {
+    return m_name;
+  }
+  size_t blocks() const {
+    return m_size;
+  }
+
+  void add_parameter(std::string name, parameter_type_id type_id) {
+    auto& back = m_parameters.emplace_back(
+        std::move(name), parameter_info{static_cast<std::int64_t>(m_size), internal_types::get_type(type_id)});
+    m_size += back.second.blocks();
+  }
+  void add_parameter(std::string name, std::variant<constant_type const*, std::shared_ptr<object_type const>> type) {
+    auto& back = m_parameters.emplace_back(std::move(name), parameter_info{static_cast<std::int64_t>(m_size), type});
+    m_size += back.second.blocks();
+  }
+
+private:
+  struct parameter_info {
+    std::int64_t relative_offset;
+    std::variant<constant_type const*, std::shared_ptr<object_type const>> type;
+
+    size_t blocks() const {
+      const struct {
+        size_t operator()(constant_type const* type) const {
+          return type->blocks;
+        }
+        size_t operator()(std::shared_ptr<object_type const> type) const {
+          return type->blocks();
+        }
+      } block_count_visitor;
+
+      return std::visit(block_count_visitor, type);
+    }
+  };
+
+  std::string m_name;
+  std::size_t m_size = 0;
+  std::vector<std::pair<std::string, parameter_info>> m_parameters;
+};
+
+struct type_registry {
+public:
+  template <typename T, typename... Args> std::shared_ptr<object_type const> const& create(Args&&... args) {
+    return m_object_types.emplace_back(std::make_shared<T const>(*this, std::forward<Args>(args)...));
+  }
+
+  void push_back(std::shared_ptr<object_type const> type) {
+    m_object_types.push_back(std::move(type));
+  }
+
+  std::variant<constant_type const*, std::shared_ptr<object_type const>> find(std::string_view name) {
+    auto const iter =
+        std::find_if(begin(m_object_types), end(m_object_types), [&](auto const& ptr) { return ptr->name() == name; });
+    if (iter == end(m_object_types))
+      return internal_types::get_type(name);
+    return *iter;
+  }
+
+  std::vector<std::shared_ptr<object_type const>> const& object_types() const {
+    return m_object_types;
+  }
+
+private:
+  std::vector<std::shared_ptr<object_type const>> m_object_types;
+};
+
+struct color_object_type : object_type {
+public:
+  color_object_type(type_registry& registry) : object_type("color_t") {
+    add_parameter("value", parameter_type_id::type_vec4unorm8);
+  }
+};
+
+struct material_object_type : object_type {
+public:
+  material_object_type(type_registry& registry) : object_type("material") {
+    add_parameter("albedo", registry.find("color_t"));
+    add_parameter("ior", parameter_type_id::type_float);
+    add_parameter("roughness", parameter_type_id::type_float);
+    add_parameter("metallic", parameter_type_id::type_float);
+    add_parameter("transmission", parameter_type_id::type_float);
+    add_parameter("albedo_texture", parameter_type_id::type_uvec2);
+  }
+};
+
+#include <sstream>
+
+std::string generate_object_loader(object_type const& obj) {
+  std::stringstream stream;
+  std::stringstream generator;
+
+  generator << obj.name() << " ld" << obj.name() << "(uint buffer_offset){";
+  generator << obj.name() << " obj;";
+
+  int num_float = 0;
+  stream << "struct " << obj.name() << "{";
+  for (auto const& par : obj.m_parameters) {
+    if (std::holds_alternative<std::shared_ptr<object_type const>>(par.second.type)) {
+      auto const param_type = std::get<std::shared_ptr<object_type const>>(par.second.type);
+      stream << param_type->name() << ' ' << par.first << ';';
+
+      generator << "obj." << par.first << "=ld" << param_type->name() << "(buffer_offset+" << num_float << ");";
+      num_float += param_type->blocks();
+
+    } else if (std::holds_alternative<constant_type const*>(par.second.type)) {
+      auto const param_type = std::get<constant_type const*>(par.second.type);
+      stream << param_type->glsl_type << ' ' << par.first << ';';
+
+      for (size_t block = 0; block < param_type->blocks; ++block) {
+        generator << "float f" << num_float + block << "=load_float(buffer_offset+"
+                  << (block + par.second.relative_offset) << ");";
+      }
+      generator << "obj." << par.first << "=" << internal_types::internal_load_identifier
+                << size_t(internal_types::get_id(param_type)) << "(";
+      for (size_t block = 0; block < param_type->blocks; ++block) {
+        if (block != 0)
+          generator << ",";
+        generator << "f" << num_float + block;
+      }
+      generator << ");";
+      num_float += param_type->blocks;
+    }
+  }
+  stream << "};";
+  generator << "return obj;}";
+  return stream.str() + generator.str();
+}
+
+std::string generate_object_loaders(type_registry& registry) {
+  std::ostringstream stream;
+  stream << internal_types::loader_glsl;
+  for (auto const& type : registry.object_types()) {
+    stream << generate_object_loader(*type);
+  }
+  return stream.str();
+}
+
+//
+// struct parameter_system {
+// public:
+//  std::shared_ptr<parameter_type> const& create_type(std::string id, size_t blocks, std::string name, std::string
+//  glsl); std::shared_ptr<parameter> const& create_parameter(std::shared_ptr<parameter_type> type);
+//  std::shared_ptr<parameter> const& create_parameter(std::string_view type_id);
+//
+//  void set(std::shared_ptr<parameter> const& parameter, float const* value_ptr);
+//
+// private:
+//  void invalidate_buffer_data() {
+//    m_buffer_data_invalid = true;
+//  }
+//
+//  std::unordered_map<std::string, std::shared_ptr<parameter_type>> m_types;
+//  std::vector<std::shared_ptr<parameter>> m_parameters;
+//
+//  std::vector<float> m_data_buffer;
+//
+//  bool m_buffer_data_invalid = false;
+//};
+//
+// struct parameter_type {
+//  std::string id;
+//  std::string name;
+//  std::string glsl;
+//  size_t blocks;
+//};
+//
+// struct parameter {
+//  std::shared_ptr<parameter_type> type;
+//  size_t base_index;
+//};
+//
+// std::shared_ptr<parameter_type> const& parameter_system::create_type(
+//    std::string id, size_t blocks, std::string name, std::string glsl) {
+//  auto& ty = m_types.emplace(id, std::make_shared<parameter_type>()).first->second;
+//  ty->blocks = blocks;
+//  ty->id = std::move(id);
+//  ty->name = std::move(name);
+//  ty->glsl = std::move(glsl);
+//  return ty;
+//}
+//
+// std::shared_ptr<parameter> const& parameter_system::create_parameter(std::string_view type_id) {
+//  auto const& type = m_types.at(std::string(type_id));
+//  return create_parameter(type);
+//}
+// std::shared_ptr<parameter> const& parameter_system::create_parameter(std::shared_ptr<parameter_type> type) {
+//  auto& par = m_parameters.emplace_back(std::make_shared<parameter>());
+//  par->base_index = m_data_buffer.size();
+//  m_data_buffer.resize(m_data_buffer.size() + type->blocks);
+//  invalidate_buffer_data();
+//  par->type = std::move(type);
+//  return par;
+//}
+//
+// void parameter_system::set(std::shared_ptr<parameter> const& parameter, float const* value_ptr) {
+//  auto const bytes = parameter->type->blocks * sizeof(float);
+//  if (std::memcmp(m_data_buffer.data() + parameter->base_index, value_ptr, bytes) != 0) {
+//    invalidate_buffer_data();
+//    std::memcpy(m_data_buffer.data() + parameter->base_index, value_ptr, bytes);
+//  }
+//}
+
+auto const type_json = R"(
+{
+  "name": "my_type",
+  "members": [
+    {"my_param": "float"},
+    {"my_purr": "int"},
+    {"my_material": "material"},
+    {"my_color": "color_t"}
+  ]
+}
+)";
+
 void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
   myrt::thread_pool loading_pool;
   myrt::gl::start(*window);
   std::format_to(std::ostreambuf_iterator(std::cout), "{} starting...", "Rendering");
+
+  type_registry registry;
+  registry.create<color_object_type>();
+  registry.create<material_object_type>();
+
+  nlohmann::json j = nlohmann::json::parse(type_json);
+  auto dynamic_type = std::make_shared<object_type>(j["name"]);
+  for (auto const& x : j["members"]) {
+    for (auto const& [key, value] : x.get<nlohmann::json::object_t>()) {
+      dynamic_type->add_parameter(key, registry.find(value));
+    }
+  }
+  registry.push_back(std::move(dynamic_type));
+
+  auto const genc = generate_object_loaders(registry);
 
   myrt::scene scene;
   myrt::sequential_pathtracer pathtracer_renderer;
@@ -454,9 +895,8 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
 
   auto const import_scale = 10;
 
-  entities.push_back(
-      ecs.create_entity(object_component{.object = load_object_file(scene, "mona.obj", import_scale)},
-          transform_component{}, object_ui_component{}));
+  entities.push_back(ecs.create_entity(object_component{.object = load_object_file(scene, "mona.obj", import_scale)},
+      transform_component{}, object_ui_component{}));
 
   myrt::async_resource<std::pair<std::uint32_t, std::uint32_t>> cube_resource(loading_pool, [] {
     sf::Context context;
@@ -545,27 +985,26 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
     ecs.update(frame.delta_time, systems);
 
     if (sf::Mouse::isButtonPressed(sf::Mouse::Button::Right)) {
-       
       float mouseX = sf::Mouse::getPosition(*window).x / (size.x * 0.5f) - 1.0f;
       float mouseY = sf::Mouse::getPosition(*window).y / (size.y * 0.5f) - 1.0f;
 
-      auto const K = render_entity->get<camera_component>()->camera.matrix(false); 
+      auto const K = render_entity->get<camera_component>()->camera.matrix(false);
       auto const ivp = inverse(render_entity->get<camera_component>()->projection * K);
       rnu::vec2 tsize = size;
 
       auto vd = ivp * rnu::vec4(mouseX, -mouseY, 1.f, 1.f);
 
-      myrt::ray_t ray{
-          .origin = render_entity->get<camera_component>()->camera.position(), .direction = normalize(rnu::vec3(vd)),
-      .length = std::numeric_limits<float>::max()};
+      myrt::ray_t ray{.origin = render_entity->get<camera_component>()->camera.position(),
+          .direction = normalize(rnu::vec3(vd)),
+          .length = std::numeric_limits<float>::max()};
       auto picked = scene.pick(ray);
       if (picked) {
         scene.set_parameter(scene.materials()[picked->drawable->material_index], "metallic", 1.0f);
         scene.set_parameter(scene.materials()[picked->drawable->material_index], "roughness", 0.22f);
-        scene.set_parameter(scene.materials()[picked->drawable->material_index], "albedo",
-            rnu::vec4(1.f, 0.4f, 0.1f, 1));
+        scene.set_parameter(
+            scene.materials()[picked->drawable->material_index], "albedo", rnu::vec4(1.f, 0.4f, 0.1f, 1));
         scene.set_parameter(scene.materials()[picked->drawable->material_index], "albedo_texture", rnu::vec2ui(0));
-        printf("Picked object: #%d at distance %.5f\n", picked->index, picked->t);
+        printf("Picked object: #%zd at distance %.5f\n", picked->index, picked->t);
       }
     }
 
@@ -622,11 +1061,25 @@ template <residence Residence> auto ldr_texture(std::filesystem::path const& pat
 
 std::vector<myrt::geometric_object> load_object_file(
     myrt::scene& scene, std::filesystem::path const& path, float import_scale) {
-  myrt::basic_material_type pbr_material_type(
-      {{"albedo", myrt::vec4_param::type}, {"ior", myrt::float_param::type}, {"roughness", myrt::float_param::type},
-          {"metallic", myrt::float_param::type}, {"transmission", myrt::float_param::type},
-          {"albedo_texture", myrt::uvec2_param::type}},
-      pbr_material_glsl);
+  std::map<std::string, std::shared_ptr<myrt::parameter_type>> pars;
+  nlohmann::json j = nlohmann::json::parse(R"(
+{
+  "parameters": {
+    "albedo": "vec4",
+    "ior": "float",
+    "roughness": "float",
+    "metallic": "float",
+    "transmission": "float",
+    "albedo_texture": "uvec2"
+  },
+  "source": "${sourceDir}/file.glsl"
+}
+)");
+  for (auto const& [key, value] : j["parameters"].get<nlohmann::json::object_t>()) {
+    pars[key] = myrt::type_registry[value];
+  }
+
+  myrt::basic_material_type pbr_material_type(pars, pbr_material_glsl);
 
   std::vector<myrt::geometric_object> objects;
   const auto load_obj = [&](auto path) {
