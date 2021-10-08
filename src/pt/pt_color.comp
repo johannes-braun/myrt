@@ -71,7 +71,7 @@ vec3 tonemapFilmic(vec3 x) {
 
 vec3 tonemap(vec3 col)
 {
-  return tonemapFilmic(col);
+  return col;//tonemapFilmic(col);
 }
 
 void accumulate_color(vec4 new_colori, ivec2 pixel)

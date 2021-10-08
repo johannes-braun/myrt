@@ -30,23 +30,27 @@ namespace myrt
     rnu::vec2ui const new_image_size(width, height);
     if (std::ranges::any_of(m_image_size != new_image_size, [](bool b) { return b; })) {
       m_image_size = new_image_size;
-      m_color_texture = nullptr;
+      m_gbuffer_texture = nullptr;
+      m_result_texture = nullptr;
       m_depth_texture = nullptr;
     }
 
-    if (!m_color_texture)
-      m_color_texture = provider.get(GL_TEXTURE_2D, GL_RGBA8, width, height, 1);
+    if (!m_gbuffer_texture) {
+      m_gbuffer_texture = provider.get(GL_TEXTURE_2D_ARRAY, GL_RGBA16F, width, height, 3, 1);
+    }
+    if (!m_result_texture) {
+      m_result_texture = provider.get(GL_TEXTURE_2D, GL_RGBA16F, width, height, 1);
+    }
     if (!m_depth_texture)
       m_depth_texture = provider.get(GL_TEXTURE_2D, GL_DEPTH24_STENCIL8, width, height, 1);
 
-    glNamedFramebufferTexture(m_framebuffer, GL_COLOR_ATTACHMENT0, m_color_texture->id(), 0);
-    glNamedFramebufferTexture(m_framebuffer, GL_DEPTH_ATTACHMENT, m_depth_texture->id(), 0);
-    glBindFramebuffer(GL_FRAMEBUFFER, m_framebuffer);
-
+    glViewport(0, 0, width, height);
+    glClearColor(0,0,0,0);
     pass_gen_multidraw(scene);
     pass_render(scene);
+    pass_resolve(scene);
 
-    return m_color_texture;
+    return m_result_texture;
   }
   void forward_renderer::set_view_matrix(rnu::mat4 const& matrix)
   {
@@ -55,6 +59,18 @@ namespace myrt
   void forward_renderer::set_projection_matrix(rnu::mat4 const& matrix)
   {
     m_projection = matrix;
+  }
+  void forward_renderer::reload_resolve_shader() {
+    if (glIsProgram(m_resolve_program)) {
+      glDeleteProgram(m_resolve_program);
+      m_resolve_program = 0;
+    }
+  }
+  void forward_renderer::reload_render_shader() {
+    if (glIsProgram(m_render)) {
+      glDeleteProgram(m_render);
+      m_render = 0;
+    }
   }
   void forward_renderer::create_gen_multidraw_shader()
   {
@@ -95,7 +111,7 @@ namespace myrt
     glMemoryBarrierByRegion(GL_SHADER_STORAGE_BARRIER_BIT);
     glMemoryBarrier(GL_COMMAND_BARRIER_BIT);
   }
-  void forward_renderer::create_render_shader(scene& scene)
+  void forward_renderer::create_render_shader()
   {
     glsp::preprocess_file_info vs_info;
     vs_info.file_path = res_dir / "../src/pt/forward/vert.vert";
@@ -103,11 +119,6 @@ namespace myrt
 
     glsp::preprocess_file_info fs_info;
     fs_info.file_path = res_dir / "../src/pt/forward/frag.frag"; 
-    glsp::definition mat_inject;
-    mat_inject.name = "MYRT_INJECT_MATERIAL_CODE_HERE";
-    mat_inject.info.replacement = scene.get_material_assembler().get_assembled_glsl();
-    fs_info.definitions = { mat_inject };
-    fs_info.expand_in_macros = true;
     const auto fragment_shader = glsp::preprocess_file(fs_info);
 
     const auto program = make_program(vertex_shader.contents, fragment_shader.contents);
@@ -128,8 +139,6 @@ namespace myrt
     m_render_bindings.view = if_empty(uniform_location(m_render, "view"));
     m_render_bindings.proj = if_empty(uniform_location(m_render, "proj"));
     m_render_bindings.geometries = if_empty(storage_buffer_binding(m_render, "Geometries"));
-    m_render_bindings.materials = if_empty(storage_buffer_binding(m_render, "MaterialsBuffer"));
-    m_render_bindings.material_data = if_empty(storage_buffer_binding(m_render, "MaterialsDataBuffer"));
 
     if (!glIsVertexArray(m_vertex_array))
     {
@@ -150,16 +159,24 @@ namespace myrt
   }
   void forward_renderer::pass_render(scene& scene)
   {
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glEnable(GL_DEPTH_TEST);
-    if (!glIsProgram(m_render))
-      create_render_shader(scene);
+    if (!glIsProgram(m_render)) {
+      create_render_shader();
+    }
+    
+    glNamedFramebufferTextureLayer(m_framebuffer, GL_COLOR_ATTACHMENT0, m_gbuffer_texture->id(), 0, 0);
+    glNamedFramebufferTextureLayer(m_framebuffer, GL_COLOR_ATTACHMENT1, m_gbuffer_texture->id(), 0, 1);
+    glNamedFramebufferTextureLayer(m_framebuffer, GL_COLOR_ATTACHMENT2, m_gbuffer_texture->id(), 0, 2);
+    glNamedFramebufferTexture(m_framebuffer, GL_DEPTH_ATTACHMENT, m_depth_texture->id(), 0);
+    GLenum draw_buffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2};
+    glNamedFramebufferDrawBuffers(m_framebuffer, std::size(draw_buffers), draw_buffers);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_framebuffer);
 
+    glDisable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glUseProgram(m_render);
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, m_multidraw_buffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_render_bindings.geometries, scene.get_scene_buffers().drawable_buffer);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_render_bindings.materials, scene.get_scene_buffers().materials_buffer);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_render_bindings.material_data, scene.get_scene_buffers().materials_data_buffer);
     
     glBindVertexArray(m_vertex_array);
     glVertexArrayVertexBuffer(m_vertex_array, 0, scene.get_scene_buffers().vertices_buffer, 0, sizeof(rnu::vec4));
@@ -173,4 +190,60 @@ namespace myrt
     glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, nullptr, m_num_multidraws, sizeof(multi_draw_indirect_t));
 
   }
-}
+  void forward_renderer::create_resolve_shader(scene& scene) {
+    glsp::preprocess_file_info vs_info;
+    vs_info.file_path = res_dir / "../src/pt/forward/resolve.vert";
+    const auto vertex_shader = glsp::preprocess_file(vs_info);
+
+    glsp::preprocess_file_info fs_info;
+    fs_info.file_path = res_dir / "../src/pt/forward/resolve.frag";
+    glsp::definition mat_inject;
+    mat_inject.name = "MYRT_INJECT_MATERIAL_CODE_HERE";
+    mat_inject.info.replacement = scene.get_material_assembler().get_assembled_glsl();
+    fs_info.definitions = {mat_inject};
+    fs_info.expand_in_macros = true;
+    const auto fragment_shader = glsp::preprocess_file(fs_info);
+
+    const auto program = make_program(vertex_shader.contents, fragment_shader.contents);
+    if (program) {
+      if (glIsProgram(m_resolve_program))
+        glDeleteProgram(m_resolve_program);
+
+      m_resolve_program = program.value();
+      load_resolve_bindings();
+    }
+    if (!glIsFramebuffer(m_resolve_framebuffer))
+      glCreateFramebuffers(1, &m_resolve_framebuffer);
+    if (!glIsVertexArray(m_resolve_vertex_array))
+      glCreateVertexArrays(1, &m_resolve_vertex_array);
+  }
+  void forward_renderer::load_resolve_bindings() {
+    m_resolve_bindings.materials = if_empty(storage_buffer_binding(m_resolve_program, "MaterialsBuffer"));
+    m_resolve_bindings.material_data = if_empty(storage_buffer_binding(m_resolve_program, "MaterialsDataBuffer"));
+    m_resolve_bindings.gbuffer = if_empty(sampler_binding(m_resolve_program, "gbuffer"));
+    m_resolve_bindings.view = if_empty(uniform_location(m_resolve_program, "view"));
+    m_resolve_bindings.proj = if_empty(uniform_location(m_resolve_program, "proj"));
+    m_resolve_bindings.random_seed = if_empty(uniform_location(m_resolve_program, "random_seed"));
+  }
+  void forward_renderer::pass_resolve(scene& scene) {
+    if (!glIsProgram(m_resolve_program)) {
+      create_resolve_shader(scene);
+    }
+    glDisable(GL_DEPTH_TEST);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, m_resolve_framebuffer);
+    glNamedFramebufferTexture(m_resolve_framebuffer, GL_COLOR_ATTACHMENT0, m_result_texture->id(), 0);
+    glUseProgram(m_resolve_program);
+    glBindTextureUnit(m_resolve_bindings.gbuffer, m_gbuffer_texture->id());
+    glBindBufferBase(
+        GL_SHADER_STORAGE_BUFFER, m_resolve_bindings.materials, scene.get_scene_buffers().materials_buffer);
+    glBindBufferBase(
+        GL_SHADER_STORAGE_BUFFER, m_resolve_bindings.material_data, scene.get_scene_buffers().materials_data_buffer);
+    glUniformMatrix4fv(m_resolve_bindings.view, 1, false, m_view.data());
+    glUniformMatrix4fv(m_resolve_bindings.proj, 1, false, m_projection.data());
+    glUniform1ui(m_resolve_bindings.random_seed, m_dist(m_rng));
+
+    glBindVertexArray(m_resolve_vertex_array);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+  }
+  }

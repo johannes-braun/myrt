@@ -1,0 +1,32 @@
+#version 430 core
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(binding = 0) uniform sampler2D input_image;
+layout(binding = 1, rgba16f) uniform writeonly image2D output_image;
+
+vec3 tonemapFilmic(vec3 x) {
+  vec3 X = max(vec3(0.0), x - 0.004);
+  vec3 result = (X * (6.2 * X + 0.5)) / (X * (6.2 * X + 1.7) + 0.06);
+  return pow(result, vec3(1.3));
+}
+
+vec3 tonemap(vec3 col)
+{
+  return tonemapFilmic(col);
+}
+
+void main()
+{
+  uvec2 pt = gl_GlobalInvocationID.xy;
+  uvec2 image_size = uvec2(textureSize(input_image, 0));
+  uint id = pt.y * image_size.x + pt.x;
+  if(pt.x > image_size.x || pt.y > image_size.y)
+  {
+    return;
+  }
+  vec2 pixel = vec2(pt);
+  vec4 color = texelFetch(input_image, ivec2(pt), 0);
+  color.rgb = tonemap(color.rgb);
+  imageStore(output_image, ivec2(pt), color);
+}

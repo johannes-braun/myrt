@@ -73,7 +73,8 @@ find_package(Stb REQUIRED)
 target_include_directories(myrt PUBLIC ${Stb_INCLUDE_DIR})
 find_package(imgui CONFIG REQUIRED)
 find_package(ImGui-SFML CONFIG REQUIRED)
-target_link_libraries(myrt PRIVATE ImGui-SFML::ImGui-SFML)
+find_package(nlohmann_json REQUIRED)
+target_link_libraries(myrt PRIVATE ImGui-SFML::ImGui-SFML nlohmann_json nlohmann_json::nlohmann_json)
 
 # GLShader
 find_package(Git REQUIRED)

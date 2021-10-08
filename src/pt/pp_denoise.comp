@@ -23,14 +23,13 @@ float normpdf3(in vec3 v, in float sigma)
 
 void main() {
   uvec2 pt = gl_GlobalInvocationID.xy;
-  uvec2 image_size = imageSize(output_image);
+  uvec2 image_size = uvec2(textureSize(input_image, 0));
   uint id = pt.y * image_size.x + pt.x;
   if(pt.x > image_size.x || pt.y > image_size.y)
   {
     return;
   }
   vec2 pixel = vec2(pt);
-	
   vec3 c = texelFetch(input_image, ivec2(pixel), 0).rgb;
 		
 	//declare stuff
@@ -45,7 +44,6 @@ void main() {
 		kernel[kSize+j] = kernel[kSize-j] = normpdf(float(j), SIGMA);
 	}
 	
-	
 	vec3 cc;
 	float factor;
 	float bZ = 1.0/normpdf(0.0, BSIGMA);
@@ -58,38 +56,9 @@ void main() {
 			factor = normpdf3(cc-c, BSIGMA)*bZ*kernel[kSize+j]*kernel[kSize+i];
 			Z += factor;
 			final_colour += factor*cc;
-
+	
 		}
 	}
 	
 	imageStore(output_image, ivec2(pixel), vec4(final_colour/Z, 1.0));
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  //vec4 center = texelFetch(input_image, ivec2(pixel), 0);
-	//vec4 color = vec4(0.0);
-	//float total = 0.0;
-	//for (float x = -4.0; x <= 4.0; x += 1.0) {
-	//	for (float y = -4.0; y <= 4.0; y += 1.0) {
-	//		vec4 smp = texelFetch(input_image, clamp(ivec2(pixel) + ivec2(x, y), ivec2(0), ivec2(image_size) - 1), 0);
-	//		float weight = 1.0 - abs(dot(smp.rgb - center.rgb, vec3(0.25)));
-	//		weight = pow(strength * weight, exponent);
-	//		color += smp * weight;
-	//		total += weight;
-	//	}
-	//}
-	//imageStore(output_image, ivec2(pixel), color / total);
-
-  //imageStore(output_image, ivec2(pixel), texelFetch(input_image, ivec2(pixel), 0));
 }

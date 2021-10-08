@@ -51,6 +51,16 @@ void random_init(sampler1D random_texture, ivec2 pixel, int start_seed)
   random_value(seed_base + int(0xffaf86 * texelFetch(random_texture, int(seed_base % random_state.random_count), 0).x));
 }
 
+void random_init_nt(ivec2 pixel, int start_seed)
+{
+  random_state.rng_state = uint(start_seed);
+  random_state.current_prime = 0;
+  random_state.random_count = 12352345;
+  int seed_base = int(random_int(pixel.x ^ 0xba77fa) * random_primes[0] + random_int(pixel.y ^ 0xcca6df) * random_primes[1] + random_int(start_seed));
+  random_value(seed_base + int(0xffaf86 * int(seed_base % random_state.random_count)));
+}
+
+
 float random_next()
 {
   return random_value(random_state.current_prime = (random_state.current_prime + 1) % 6);

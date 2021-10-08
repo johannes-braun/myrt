@@ -69,9 +69,9 @@ inline std::shared_ptr<resident_texture_t> make_resident(std::shared_ptr<texture
 class texture_provider_t {
 public:
   void new_frame();
-  std::shared_ptr<texture_t> get(GLenum target, GLenum fmt, int w, int layers);
-  std::shared_ptr<texture_t> get(GLenum target, GLenum fmt, int w, int h, int layers);
-  std::shared_ptr<texture_t> get(GLenum target, GLenum fmt, int w, int h, int d, int layers);
+  std::shared_ptr<texture_t> get(GLenum target, GLenum fmt, int w, int levels);
+  std::shared_ptr<texture_t> get(GLenum target, GLenum fmt, int w, int h, int levels);
+  std::shared_ptr<texture_t> get(GLenum target, GLenum fmt, int w, int h, int d, int levels);
   std::shared_ptr<texture_t> get_ms(GLenum target, GLenum fmt, int w, int h, int samples);
   std::shared_ptr<texture_t> find(std::uint32_t id);
 

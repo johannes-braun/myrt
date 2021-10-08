@@ -86,6 +86,23 @@ parameter_scope new_scope(parameter_scope const& current) {
 namespace myrt {}
 
 #define glsl(...) #__VA_ARGS__
+
+auto const sop = glsl(
+
+    material<my_type> my_class{
+      float f;
+
+      my_class(my_type material) {
+
+      }
+
+      void sample() {}
+
+      void 
+    };
+
+);
+
 auto pbr_material_glsl = std::string("#include <pbr.glsl>\n") +
                          glsl(
                              struct material_state_t {
@@ -131,12 +148,12 @@ auto pbr_material_glsl = std::string("#include <pbr.glsl>\n") +
                                    material_state.ior1, material_state.ior2);
                              });
 
-#ifdef CHECK_XGL_STUFF
-#  include <myrt/xgl/xgl_tokenizer.hpp>
-#  include <myrt/xgl/xgl_parser.hpp>
-#  include <myrt/xgl/xgl_evaluator.hpp>
-#  include <myrt/xgl/xgl_scope_system.hpp>
+#include <myrt/xgl/xgl_tokenizer.hpp>
+#include <myrt/xgl/xgl_parser.hpp>
+#include <myrt/xgl/xgl_evaluator.hpp>
+#include <myrt/xgl/xgl_scope_system.hpp>
 
+#ifdef CHECK_XGL_STUFF
 void write_expr(std::ostream& o, myrt::xgl::expr_entity const& e) {
   namespace xgl = myrt::xgl;
   struct visitor_t {
@@ -406,7 +423,18 @@ struct make_renderer_ui {
       ImGui::End();
     }
   }
-  void operator()(myrt::forward_renderer* fwd) {}
+  void operator()(myrt::forward_renderer* fwd) {
+    if (ImGui::Begin("Renderer")) {
+      ImGui::Text("Framerate: %.00f fps",1.f / dt);
+      if (ImGui::Button("Reload RESOLVE")) {
+        fwd->reload_resolve_shader();
+      }
+      if (ImGui::Button("Reload RENDER")) {
+        fwd->reload_render_shader();
+      }
+      ImGui::End();
+    }
+  }
 };
 
 struct renderer_ui_system : public myrt::typed_system<renderer_component, renderer_ui_component> {
@@ -763,71 +791,6 @@ std::string generate_object_loaders(type_registry& registry) {
   return stream.str();
 }
 
-//
-// struct parameter_system {
-// public:
-//  std::shared_ptr<parameter_type> const& create_type(std::string id, size_t blocks, std::string name, std::string
-//  glsl); std::shared_ptr<parameter> const& create_parameter(std::shared_ptr<parameter_type> type);
-//  std::shared_ptr<parameter> const& create_parameter(std::string_view type_id);
-//
-//  void set(std::shared_ptr<parameter> const& parameter, float const* value_ptr);
-//
-// private:
-//  void invalidate_buffer_data() {
-//    m_buffer_data_invalid = true;
-//  }
-//
-//  std::unordered_map<std::string, std::shared_ptr<parameter_type>> m_types;
-//  std::vector<std::shared_ptr<parameter>> m_parameters;
-//
-//  std::vector<float> m_data_buffer;
-//
-//  bool m_buffer_data_invalid = false;
-//};
-//
-// struct parameter_type {
-//  std::string id;
-//  std::string name;
-//  std::string glsl;
-//  size_t blocks;
-//};
-//
-// struct parameter {
-//  std::shared_ptr<parameter_type> type;
-//  size_t base_index;
-//};
-//
-// std::shared_ptr<parameter_type> const& parameter_system::create_type(
-//    std::string id, size_t blocks, std::string name, std::string glsl) {
-//  auto& ty = m_types.emplace(id, std::make_shared<parameter_type>()).first->second;
-//  ty->blocks = blocks;
-//  ty->id = std::move(id);
-//  ty->name = std::move(name);
-//  ty->glsl = std::move(glsl);
-//  return ty;
-//}
-//
-// std::shared_ptr<parameter> const& parameter_system::create_parameter(std::string_view type_id) {
-//  auto const& type = m_types.at(std::string(type_id));
-//  return create_parameter(type);
-//}
-// std::shared_ptr<parameter> const& parameter_system::create_parameter(std::shared_ptr<parameter_type> type) {
-//  auto& par = m_parameters.emplace_back(std::make_shared<parameter>());
-//  par->base_index = m_data_buffer.size();
-//  m_data_buffer.resize(m_data_buffer.size() + type->blocks);
-//  invalidate_buffer_data();
-//  par->type = std::move(type);
-//  return par;
-//}
-//
-// void parameter_system::set(std::shared_ptr<parameter> const& parameter, float const* value_ptr) {
-//  auto const bytes = parameter->type->blocks * sizeof(float);
-//  if (std::memcmp(m_data_buffer.data() + parameter->base_index, value_ptr, bytes) != 0) {
-//    invalidate_buffer_data();
-//    std::memcpy(m_data_buffer.data() + parameter->base_index, value_ptr, bytes);
-//  }
-//}
-
 auto const type_json = R"(
 {
   "name": "my_type",
@@ -893,9 +856,9 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
 
   render_entity->get<camera_component>()->camera = {rnu::vec3{0.0f, 0.0f, 15.f}};
 
-  auto const import_scale = 10;
+  auto const import_scale = 4;
 
-  entities.push_back(ecs.create_entity(object_component{.object = load_object_file(scene, "mona.obj", import_scale)},
+  entities.push_back(ecs.create_entity(object_component{.object = load_object_file(scene, "fischl/fischl.obj", import_scale)},
       transform_component{}, object_ui_component{}));
 
   myrt::async_resource<std::pair<std::uint32_t, std::uint32_t>> cube_resource(loading_pool, [] {
@@ -951,6 +914,9 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
   float tm = 0.04;
 
   myrt::denoise denoise;
+  myrt::fxaa fxaa;
+  myrt::tonemap tonemap;
+  myrt::bloom bloom;
 
   for (auto frame : myrt::gl::next_frame(*window)) {
     if (stop_token.stop_requested())
@@ -1008,9 +974,33 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
       }
     }
 
+    static float scaling1 = 2.f;
+    static float scaling2 = 8.f;
+    static float fac1 = 0.3f;
+    static float fac2 = 0.15f;
+    static float step = 1.25f;
+
+    if(ImGui::Begin("PP")) {
+      ImGui::DragFloat("S1", &scaling1, 0.01f, 0.5f, 100.f);
+      ImGui::DragFloat("S2", &scaling2, 0.01f, 0.5f, 100.f);
+      ImGui::DragFloat("F1", &fac1, 0.01f, 0.f, 1.f);
+      ImGui::DragFloat("F2", &fac2, 0.01f, 0.f, 1.f);
+      ImGui::DragFloat("Step", &step, 0.01f, 0.1f, 100.f);
+
+      ImGui::End();
+    }
+
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    auto result = render_entity->get<renderer_component>()->render_target;
-    result = denoise.process(global_texture_provider, result->id());
+    auto render_target = render_entity->get<renderer_component>()->render_target;
+    auto result = render_target;
+    bloom.texture_scaling = scaling1;
+    bloom.overlay_factor = fac1;
+    bloom.blur_step = step;
+    result = bloom.process(global_texture_provider, result->id());
+    result = tonemap.process(global_texture_provider, result->id());
+    result = fxaa.process(global_texture_provider, result->id());
+    //result = denoise.process(global_texture_provider, result->id());
+    result = fxaa.process(global_texture_provider, result->id());
     glNamedFramebufferTexture(fbo, GL_COLOR_ATTACHMENT0, result->id(), 0);
     glBlitNamedFramebuffer(fbo, 0, 0, 0, size.x, size.y, 0, 0, size.x, size.y, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
@@ -1090,6 +1080,9 @@ std::vector<myrt::geometric_object> load_object_file(
       auto tri = myrt::obj::triangulate(obj);
 
       for (const auto m : tri) {
+        if (m.indices.empty())
+          continue;
+
         auto mesh = scene.push_geometry(m.indices, {(rnu::vec3*)m.positions[0].data(), m.positions.size()},
             {(rnu::vec3*)m.normals[0].data(), m.positions.size()},
             {(rnu::vec2*)m.texcoords[0].data(), m.positions.size()});

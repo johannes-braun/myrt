@@ -28,13 +28,13 @@ layout(location = 0) out vec3 out_normal;
 layout(location = 1) out vec3 out_position;
 layout(location = 2) out vec2 out_uv;
 layout(location = 3) flat out int out_material;
-layout(location = 4) flat out vec3 cam_pos;
+//layout(location = 4) flat out vec3 cam_pos;
 
 void main()
 {
   drawable_geometry_t geo = geometries[gl_DrawID];
 
-  cam_pos = inverse(view)[3].xyz;
+  //cam_pos = inverse(view)[3].xyz;
 
   out_uv = uv;
   vec4 pt = geo.transformation * vec4(point.xyz, 1);

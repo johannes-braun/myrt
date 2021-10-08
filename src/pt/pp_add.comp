@@ -1,0 +1,25 @@
+#version 430 core
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(binding = 0) uniform sampler2D input_image;
+layout(binding = 1) uniform sampler2D overlay_texture;
+layout(binding = 1, rgba16f) uniform writeonly image2D output_image;
+
+uniform float factor;
+
+void main()
+{
+  uvec2 pt = gl_GlobalInvocationID.xy;
+  uvec2 image_size = uvec2(textureSize(input_image, 0));
+  uint id = pt.y * image_size.x + pt.x;
+  if(pt.x > image_size.x || pt.y > image_size.y)
+  {
+    return;
+  }
+  vec2 pixel = vec2(pt);
+  vec4 color = texelFetch(input_image, ivec2(pt), 0);
+  vec4 overlay = texture(overlay_texture, pixel / image_size, 0);
+
+  imageStore(output_image, ivec2(pt), color + factor * overlay);
+}
