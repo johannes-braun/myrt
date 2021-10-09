@@ -111,6 +111,14 @@ void main()
     { 
       vec2 hs = 2*random_next_2d() - 1;
 
+      vec2 shuv = shadow_uv + 1.5*hs / shadow_map_size;
+
+      if(any(greaterThanEqual(shuv, vec2(1)))||any(lessThan(shuv, vec2(0))))
+      {
+        avg_diff+=1;
+        continue;
+      }
+
       vec3 shadow_map_pos = texture(shadow_map, shadow_uv + 1.5*hs / shadow_map_size).xyz;
       vec3 check_point = position - 1000 * light_dir;
       float l1 = distance(check_point, shadow_map_pos);
@@ -135,8 +143,8 @@ void main()
   material_sample(position, uv, normal, normal, to_cam, refgb, refpdf);
 
   float freeness = 0;
-  const float ssao_distance = 0.22;
-  const float ssao_fac = 0.1;
+  const float ssao_distance = 0.02;
+  const float ssao_fac = 0.3;
   int samplesxy = 16;
 
   for(int x = 0; x < samplesxy; ++x)
@@ -178,14 +186,12 @@ void main()
   }
   freeness /= float(samplesxy);
 
-  freeness = pow(freeness, 1);
-
-  vec4 color0 = vec4((refgb /refpdf  + ref / pdf * shadow * max(0, dot(normal, light_dir))), 1);
+  vec4 color0 = vec4((refgb / refpdf + ref / pdf * shadow * max(0, dot(normal, light_dir))), 1);
   vec4 color1 = freeness * color0;
 
   color = color1;
   if(any(isnan(color)))
   {
-    color = vec4(0);
+    color = vec4(vec3(refgb / refpdf), 0);
   }
 }

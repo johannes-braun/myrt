@@ -1,47 +1,52 @@
 #pragma once
 #include "texture_provider.hpp"
 #include <rnu/math/math.hpp>
+#include <optional>
 
 namespace myrt {
-class denoise {
+class basic_post_process {
+public:
+  std::shared_ptr<texture_t> process(texture_provider_t& provider, std::uint32_t texture);
+  std::uint32_t sampler() const noexcept;
+
+protected:
+  virtual void on_apply_bindings(std::uint32_t program){};
+  virtual std::optional<std::uint32_t> on_create_program() = 0;
+  virtual void on_load_bindings(std::uint32_t program){};
+
+private:
+  void create_program();
+  void load_bindings();
+
+  struct {
+    std::int32_t input_image = 0;
+    std::int32_t output_image = 0;
+  } m_base_bindings;
+
+  rnu::vec2i m_group_sizes;
+  std::uint32_t m_program;
+  std::uint32_t m_sampler;
+};
+
+class denoise : public basic_post_process {
 public:
   float exponent = 10;
   float strength = 0.05f;
 
-  std::shared_ptr<texture_t> process(texture_provider_t& provider, std::uint32_t texture);
-
 private:
-  void create();
-  void load_bindings();
+  virtual void on_apply_bindings(std::uint32_t program) override;
+  virtual std::optional<std::uint32_t> on_create_program() override;
+  virtual void on_load_bindings(std::uint32_t program) override;
 
   struct {
-    std::int32_t input_image = 0;
-    std::int32_t output_image = 0;
     std::int32_t strength = 0;
     std::int32_t exponent = 0;
-  } m_denoiser_bindings;
-
-  std::uint32_t m_input_sampler;
-  rnu::vec2i m_denoiser_group_sizes;
-  std::uint32_t m_denoiser;
+  } m_bindings;
 };
 
-class fxaa {
-public:
-  std::shared_ptr<texture_t> process(texture_provider_t& provider, std::uint32_t texture);
-
+class fxaa : public basic_post_process {
 private:
-  void create();
-  void load_bindings();
-
-  struct {
-    std::int32_t input_image = 0;
-    std::int32_t output_image = 0;
-  } m_bindings;
-
-  std::uint32_t m_input_sampler;
-  rnu::vec2i m_group_sizes;
-  std::uint32_t m_program;
+  std::optional<std::uint32_t> on_create_program() final;
 };
 
 class linear_scale {
@@ -57,50 +62,35 @@ private:
   std::uint32_t m_framebuffer;
 };
 
-class cutoff {
+class cutoff : public basic_post_process {
 public:
   rnu::vec4 value = {1, 1, 1, 1};
   bool leave_above = true;
 
-  std::shared_ptr<texture_t> process(texture_provider_t& provider, std::uint32_t texture);
-
 private:
-  void create();
-  void load_bindings();
-
+  virtual void on_apply_bindings(std::uint32_t program) override;
+  virtual std::optional<std::uint32_t> on_create_program() override;
+  virtual void on_load_bindings(std::uint32_t program) override;
   struct {
-    std::int32_t input_image = 0;
-    std::int32_t output_image = 0;
     std::int32_t value = 0;
     std::int32_t leave_above = 0;
   } m_bindings;
-
-  std::uint32_t m_input_sampler;
-  rnu::vec2i m_group_sizes;
-  std::uint32_t m_program;
 };
 
-class blur {
+class blur : public basic_post_process {
 public:
   enum class axis { x = 0, y = 1 } direction;
   float step = 1.25f;
 
-  std::shared_ptr<texture_t> process(texture_provider_t& provider, std::uint32_t texture);
-
 private:
-  void create();
-  void load_bindings();
+  virtual void on_apply_bindings(std::uint32_t program) override;
+  virtual std::optional<std::uint32_t> on_create_program() override;
+  virtual void on_load_bindings(std::uint32_t program) override;
 
   struct {
-    std::int32_t input_image = 0;
-    std::int32_t output_image = 0;
     std::int32_t direction = 0;
     std::int32_t step = 0;
   } m_bindings;
-
-  std::uint32_t m_input_sampler;
-  rnu::vec2i m_group_sizes;
-  std::uint32_t m_program;
 };
 
 class blur2d {
@@ -112,48 +102,26 @@ private:
   blur m_blur;
 };
 
-class tonemap {
-public:
-  std::shared_ptr<texture_t> process(texture_provider_t& provider, std::uint32_t texture);
-
+class tonemap : public basic_post_process {
 private:
-  void create();
-  void load_bindings();
-
-  struct {
-    std::int32_t input_image = 0;
-    std::int32_t output_image = 0;
-    std::int32_t direction = 0;
-  } m_bindings;
-
-  std::uint32_t m_input_sampler;
-  rnu::vec2i m_group_sizes;
-  std::uint32_t m_program;
+  virtual std::optional<std::uint32_t> on_create_program() override;
 };
 
-class add {
+class add : public basic_post_process {
 public:
   std::uint32_t overlay_texture = 0;
   float factor = 1;
 
-  std::shared_ptr<texture_t> process(texture_provider_t& provider, std::uint32_t texture);
-
 private:
-  void create();
-  void load_bindings();
+  virtual void on_apply_bindings(std::uint32_t program) override;
+  virtual std::optional<std::uint32_t> on_create_program() override;
+  virtual void on_load_bindings(std::uint32_t program) override;
 
   struct {
-    std::int32_t input_image = 0;
-    std::int32_t output_image = 0;
     std::int32_t overlay_texture = 0;
     std::int32_t factor = 0;
   } m_bindings;
-
-  std::uint32_t m_input_sampler;
-  rnu::vec2i m_group_sizes;
-  std::uint32_t m_program;
 };
-
 
 class bloom {
 public:

@@ -89,16 +89,14 @@ namespace myrt {}
 
 auto const sop = glsl(
 
-    material<my_type> my_class{
+    material<my_type> my_class {
       float f;
 
-      my_class(my_type material) {
-
-      }
+      my_class(my_type material) {}
 
       void sample() {}
 
-      void 
+      void
     };
 
 );
@@ -277,6 +275,23 @@ struct transform_component : myrt::component<transform_component> {
 
 struct object_ui_component : myrt::component<object_ui_component> {};
 
+struct bouncer_component : myrt::component<bouncer_component> {
+  float radius = 1;
+  float current_speed = 0;
+};
+
+struct bouncer_system : public myrt::typed_system<transform_component, bouncer_component> {
+public:
+  void update(duration_type delta, transform_component* t, bouncer_component* b) const override {
+    b->current_speed -= 9.81 * delta.count();
+    t->position.y += b->current_speed * delta.count();
+    if (t->position.y < b->radius) {
+      t->position = rnu::vec3(t->position.x, b->radius, t->position.y);
+      b->current_speed = -b->current_speed;
+    }
+  }
+};
+
 struct make_ui_t {
   bool operator()(std::vector<myrt::geometric_object>& obj) const {
     auto const begin = ImGui::Begin("Geometric Objects");
@@ -425,7 +440,7 @@ struct make_renderer_ui {
   }
   void operator()(myrt::forward_renderer* fwd) {
     if (ImGui::Begin("Renderer")) {
-      ImGui::Text("Framerate: %.00f fps",1.f / dt);
+      ImGui::Text("Framerate: %.00f fps", 1.f / dt);
       if (ImGui::Button("Reload RESOLVE")) {
         fwd->reload_resolve_shader();
       }
@@ -803,6 +818,100 @@ auto const type_json = R"(
 }
 )";
 
+static myrt::basic_material_type pbr_material_type = [] {
+  std::map<std::string, std::shared_ptr<myrt::parameter_type>> pars;
+  nlohmann::json j = nlohmann::json::parse(R"(
+{
+  "parameters": {
+    "albedo": "vec4",
+    "ior": "float",
+    "roughness": "float",
+    "metallic": "float",
+    "transmission": "float",
+    "albedo_texture": "uvec2"
+  },
+  "source": "${sourceDir}/file.glsl"
+}
+)");
+  for (auto const& [key, value] : j["parameters"].get<nlohmann::json::object_t>()) {
+    pars[key] = myrt::type_registry[value];
+  }
+  return myrt::basic_material_type(pars, pbr_material_glsl);
+}();
+
+std::vector<myrt::geometric_object> gen_terrain(myrt::scene& scene) {
+  int size = 128;
+
+  std::vector<float> heights(size * size);
+  std::generate(begin(heights), end(heights), [] { return 0.1*rand() / float(RAND_MAX); });
+  std::vector<rnu::vec3> corner_normals(size * size);
+
+  auto height_at = [&](int x, int z) -> float& { return heights[x + z * size]; };
+
+  std::vector<std::uint32_t> indices;
+  std::vector<rnu::vec3> positions;
+  std::vector<rnu::vec3> normals;
+  std::vector<rnu::vec2> uvs;
+
+  for (int i = 0; i < size - 1; ++i) {
+    for (int j = 0; j < size - 1; ++j) {
+      // generate quad at (i, j) -> (i+1, j+1)
+
+      rnu::vec3 a00(i, height_at(i, j), j);
+      rnu::vec3 a10(i + 1, height_at(i + 1, j), j);
+      rnu::vec3 a01(i, height_at(i, j + 1), j + 1);
+      rnu::vec3 a11(i + 1, height_at(i + 1, j + 1), j + 1);
+
+      rnu::vec2 u00(0, 0);
+      rnu::vec2 u10(0 + 1, 0);
+      rnu::vec2 u01(0, 0 + 1);
+      rnu::vec2 u11(0 + 1, 0 + 1);
+
+      std::uint32_t const base_index = positions.size();
+
+      uvs.push_back(u00);
+      uvs.push_back(u10);
+      uvs.push_back(u01);
+      uvs.push_back(u11);
+
+      positions.push_back(a00);
+      positions.push_back(a10);
+      positions.push_back(a01);
+      positions.push_back(a11);
+
+      rnu::vec3 n = cross(a00 - a10, a00 - a01);
+      normals.push_back(n);
+      normals.push_back(n);
+      normals.push_back(n);
+      normals.push_back(n);
+
+      indices.push_back(base_index + 0);
+      indices.push_back(base_index + 1);
+      indices.push_back(base_index + 2);
+      indices.push_back(base_index + 2);
+      indices.push_back(base_index + 1);
+      indices.push_back(base_index + 3);
+    }
+  }
+
+  myrt::basic_material pbrmat0(pbr_material_type);
+
+  pbrmat0.set("albedo", rnu::vec4(0.2, 0.6, 0.2, 1));
+  pbrmat0.set("ior", 1.4f);
+  pbrmat0.set("roughness", 0.8f);
+  pbrmat0.set("transmission", 0.f);
+  pbrmat0.set("albedo_texture", rnu::vec2ui(0));
+
+  auto gob = scene.push_geometry(indices, positions, normals, uvs);
+
+  myrt::geometric_object obj;
+  obj.name = "Terrain";
+  obj.geometry = gob;
+  obj.material = scene.push_material(pbrmat0);
+  obj.transformation = rnu::translation(rnu::vec3(-size / 2, 0, -size / 2));
+  return {obj};
+}
+
 void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
   myrt::thread_pool loading_pool;
   myrt::gl::start(*window);
@@ -839,9 +948,11 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
   object_ui_system geo_ui_system;
   render_system render_system;
   renderer_ui_system render_ui_system;
+  bouncer_system bouncer_system;
 
   myrt::system_list systems;
   systems.add(object_system);
+  systems.add(bouncer_system);
   systems.add(geo_ui_system);
   systems.add(render_system);
   systems.add(render_ui_system);
@@ -854,12 +965,21 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
   rc->renderer = &forward_renderer;
   rc->scene = &scene;
 
-  render_entity->get<camera_component>()->camera = {rnu::vec3{0.0f, 0.0f, 15.f}};
+  render_entity->get<camera_component>()->camera = {rnu::vec3{0.0f, 1.0f, 3.f}};
 
-  auto const import_scale = 4;
+  auto const import_scale = 1;
 
-  entities.push_back(ecs.create_entity(object_component{.object = load_object_file(scene, "bunnyonplate.obj", import_scale)},
-      transform_component{}, object_ui_component{}));
+  object_component instance{.object = load_object_file(scene, "ball.obj", 1)};
+  entities.push_back(ecs.create_entity(instance, transform_component{.position = rnu::vec3(0, 3, 0), .scale = rnu::vec3(0.1f)},
+          object_ui_component{}, bouncer_component{.radius=0.1f}));
+
+  object_component terrain{.object = gen_terrain(scene)};
+  entities.push_back(ecs.create_entity(terrain, transform_component{}, object_ui_component{}));
+
+  object_component fsf{.object = load_object_file(scene, "fischl/fischl.obj", 1)};
+  entities.push_back(
+      ecs.create_entity(fsf, transform_component{.position = rnu::vec3(0, 0, 1)},
+          object_ui_component{}));
 
   myrt::async_resource<std::pair<std::uint32_t, std::uint32_t>> cube_resource(loading_pool, [] {
     sf::Context context;
@@ -887,8 +1007,8 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
     abstract_art_sdf.set(capsule.get_parameter(capsule.material), 1);
     abstract_art_sdf.set(sphere.get_parameter(sphere.material), 2);
 
-    entities.push_back(ecs.create_entity(object_component{.object = std::move(abstract_art_sdf)},
-        transform_component{.scale = {1}}, object_ui_component{}));
+    object_component instance{.object = std::move(abstract_art_sdf)};
+    entities.push_back(ecs.create_entity(instance, transform_component{.scale = {1}}, object_ui_component{}));
   }
 
   bool cubemap_enabled = false;
@@ -917,6 +1037,7 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
   myrt::fxaa fxaa;
   myrt::tonemap tonemap;
   myrt::bloom bloom;
+  myrt::linear_scale down_scale;
 
   for (auto frame : myrt::gl::next_frame(*window)) {
     if (stop_token.stop_requested())
@@ -924,9 +1045,11 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
     global_texture_provider.new_frame();
     rnu::vec2i size(window->getSize().x, window->getSize().y);
 
+    static float super_sampling = 1.25;
+
     {
-      render_entity->get<camera_component>()->width = size.x;
-      render_entity->get<camera_component>()->height = size.y;
+      render_entity->get<camera_component>()->width = super_sampling * size.x;
+      render_entity->get<camera_component>()->height = super_sampling * size.y;
       render_entity->get<camera_component>()->projection = rnu::cameraf::projection(
           rnu::radians(70), float(window->getSize().x) / float(window->getSize().y), 0.01f, 1000.f, true);
 
@@ -980,7 +1103,7 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
     static float fac2 = 0.15f;
     static float step = 1.25f;
 
-    if(ImGui::Begin("PP")) {
+    if (ImGui::Begin("PP")) {
       ImGui::DragFloat("S1", &scaling1, 0.01f, 0.5f, 100.f);
       ImGui::DragFloat("S2", &scaling2, 0.01f, 0.5f, 100.f);
       ImGui::DragFloat("F1", &fac1, 0.01f, 0.f, 1.f);
@@ -996,28 +1119,31 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
     bloom.texture_scaling = scaling1;
     bloom.overlay_factor = fac1;
     bloom.blur_step = step;
+    down_scale.factor = 1.f / super_sampling;
+    result = down_scale.process(global_texture_provider, result->id());
     result = bloom.process(global_texture_provider, result->id());
     result = tonemap.process(global_texture_provider, result->id());
     result = fxaa.process(global_texture_provider, result->id());
     glNamedFramebufferTexture(fbo, GL_COLOR_ATTACHMENT0, result->id(), 0);
     glBlitNamedFramebuffer(fbo, 0, 0, 0, size.x, size.y, 0, 0, size.x, size.y, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
-    ImGui::Begin("Settings");
+    if (ImGui::Begin("Settings")) {
+      ImGui::DragFloat("SuperSampling", &super_sampling, 0.001f, 0.01f, 4.f);
+      if (ImGui::CollapsingHeader("Denoise")) {
+        ImGui::DragFloat("Exponent", &denoise.exponent, 0.001, -10.f, 10.f);
+        ImGui::DragFloat("Strength", &denoise.strength, 0.001, -10.f, 10.f);
+      }
+      if (ImGui::Checkbox("outlined", &outlined)) {
+        pathtracer_renderer.invalidate_counter();
+      }
+      ImGui::Checkbox("CUBEMPAP", &cubemap_enabled);
 
-    if (ImGui::CollapsingHeader("Denoise")) {
-      ImGui::DragFloat("Exponent", &denoise.exponent, 0.001, -10.f, 10.f);
-      ImGui::DragFloat("Strength", &denoise.strength, 0.001, -10.f, 10.f);
+      if (cubemap_enabled)
+        cube_resource.current([&](auto const& cur) { pathtracer_renderer.set_cubemap(cur.first, cur.second); });
+      else
+        pathtracer_renderer.set_cubemap(0, 0);
+      ImGui::End();
     }
-    if (ImGui::Checkbox("outlined", &outlined)) {
-      pathtracer_renderer.invalidate_counter();
-    }
-    ImGui::Checkbox("CUBEMPAP", &cubemap_enabled);
-
-    if (cubemap_enabled)
-      cube_resource.current([&](auto const& cur) { pathtracer_renderer.set_cubemap(cur.first, cur.second); });
-    else
-      pathtracer_renderer.set_cubemap(0, 0);
-    ImGui::End();
   }
 }
 
@@ -1034,7 +1160,7 @@ template <residence Residence> auto ldr_texture(std::filesystem::path const& pat
   glTextureParameteri(texture, GL_TEXTURE_WRAP_T, GL_REPEAT);
 
   stbi::ldr_image image(path, 3);
-  glTextureStorage2D(texture, 1, GL_RGB8, image.width, image.height);
+  glTextureStorage2D(texture, 8, GL_RGB8, image.width, image.height);
   glTextureSubImage2D(texture, 0, 0, 0, image.width, image.height, GL_RGB, GL_UNSIGNED_BYTE, image.data.get());
   glGenerateTextureMipmap(texture);
 
@@ -1049,7 +1175,7 @@ template <residence Residence> auto ldr_texture(std::filesystem::path const& pat
 
 std::vector<myrt::geometric_object> load_object_file(
     myrt::scene& scene, std::filesystem::path const& path, float import_scale) {
-  std::map<std::string, std::shared_ptr<myrt::parameter_type>> pars;
+  /*std::map<std::string, std::shared_ptr<myrt::parameter_type>> pars;
   nlohmann::json j = nlohmann::json::parse(R"(
 {
   "parameters": {
@@ -1067,7 +1193,7 @@ std::vector<myrt::geometric_object> load_object_file(
     pars[key] = myrt::type_registry[value];
   }
 
-  myrt::basic_material_type pbr_material_type(pars, pbr_material_glsl);
+  myrt::basic_material_type pbr_material_type(pars, pbr_material_glsl);*/
 
   std::vector<myrt::geometric_object> objects;
   const auto load_obj = [&](auto path) {

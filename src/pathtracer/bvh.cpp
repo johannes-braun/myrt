@@ -157,14 +157,8 @@ bvh::bvh(std::span<aabb_t const> aabbs, primitive_split_func split) : m_split_pr
 
   for (size_t i = 0; i < aabbs.size(); ++i) build_state.full_aabb.enclose(aabbs[i]);
 
-  std::format_to(std::ostreambuf_iterator(std::cout), "Start building with {} primitives...\n", aabbs.size());
-
   create(build_state);
-
-  std::format_to(
-      std::ostreambuf_iterator(std::cout), "Building finished with {} primitives...\n", m_reordered_indices.size());
 }
-
 //#include "../pt/bvh.impl.glsl"
 
 namespace detail {
@@ -407,7 +401,7 @@ void bvh::create(build_state_t& initial_state) {
   m_nodes.shrink_to_fit();
 
   size_t max_depth = *std::ranges::max_element(depths);
-  std::format_to(std::ostreambuf_iterator(std::cout), "Max depth was {}\n", max_depth);
+  //std::format_to(std::ostreambuf_iterator(std::cout), "Max depth was {}\n", max_depth);
 
   m_reordered_indices = initial_state.indices;
 }
