@@ -8,7 +8,7 @@
 #include <unordered_set>
 #include <experimental/generator>
 #include "sdf.hpp"
-#include "material.hpp"
+#include "../material.hpp"
 
 namespace myrt {
 struct geometry_info_t {
@@ -42,7 +42,7 @@ struct sdf_info_t {
  };*/
 
 struct geometry_t;
-struct material_t;
+using material_t = material_buffer::material_t;
 struct sdf_t;
 class scene;
 
@@ -92,7 +92,7 @@ public:
   constexpr static size_t number_of_buffers = sizeof(scene_buffers) / sizeof(std::uint32_t);
 
   using geometry_pointer = std::shared_ptr<geometry_t>;
-  using material_pointer = std::shared_ptr<material_t>;
+  using material_pointer = std::shared_ptr<material_buffer::material_t const>;
   using sdf_pointer = std::shared_ptr<sdf_t>;
 
   struct prepare_result_t {
@@ -123,8 +123,8 @@ public:
     int pad[3];
   };
   struct material_reference_t {
-    int id;
-    int offset;
+    std::int32_t id;
+    std::int32_t offset;
   };
   struct aligned_point_t {
     constexpr aligned_point_t(point_type point) : value(point) {}
@@ -133,9 +133,27 @@ public:
 
   scene();
   ~scene();
+
+  template<typename T>
+  decltype(auto) register_type() {
+    return m_type_registry.create<T>();
+  }
+
+
   [[nodiscard]] geometry_pointer push_geometry(std::span<index_type const> indices, std::span<point_type const> points,
       std::span<point_type const> normals, std::span<uv_type const> uvs);
-  [[nodiscard]] material_pointer push_material(std::shared_ptr<material> type);
+  
+  [[nodiscard]] decltype(auto) push_material_type(std::shared_ptr<object_type const> type, std::string glsl) {
+    return m_material_types.push_type(std::move(type), std::move(glsl));
+  }
+  [[nodiscard]] decltype(auto) push_material(material_buffer::material_type_t type) {
+    auto const& m = m_material_buffer.push(std::move(type));
+    m_material_references.push_back(
+        material_reference_t{.id = int(m->type_info->id), .offset = int(m->offset)});
+    m_materials_changed = true;
+    return m;
+  }
+
   [[nodiscard]] sdf_pointer push_sdf(sdf_info_t info);
 
   void enqueue(geometry_t const* geometry, material_t const* material, rnu::mat4 const& transformation);
@@ -144,7 +162,7 @@ public:
   void enqueue(sdf_t const* geometry, rnu::mat4 const& transformation);
   void enqueue(const sdf_pointer& geometry, rnu::mat4 const& transformation);
 
-  [[nodiscard]] std::shared_ptr<material_type> type_of(material_pointer const& material) const;
+  //[[nodiscard]] std::shared_ptr<material_type> type_of(material_pointer const& material) const;
 
   // void set_material_parameter(const sdf_pointer& sdf, std::shared_ptr<int_param> const& parameter, material_pointer
   // material);
@@ -155,14 +173,14 @@ public:
 
   void set_parameter(const sdf_pointer& sdf, std::shared_ptr<parameter> const& parameter, float* value_ptr);
 
-  template <typename T>
-  void set_parameter(const material_pointer& material, std::shared_ptr<parameter> const& parameter_name, T&& value);
+  //template <typename T>
+  //void set_parameter(const material_pointer& material, std::shared_ptr<parameter> const& parameter_name, T&& value);
 
   template <typename T> void set_parameter(const material_pointer& material, std::string const& name, T&& value);
 
-  template <typename T>
+ /* template <typename T>
   T get_parameter_value(const material_pointer& material, std::shared_ptr<parameter> const& param);
-  template <typename T> T get_parameter_value(const material_pointer& material, std::string const& name);
+  template <typename T> T get_parameter_value(const material_pointer& material, std::string const& name);*/
   std::shared_ptr<parameter> get_parameter(const material_pointer& material, std::string const& name) const;
 
   struct hit {
@@ -176,9 +194,9 @@ public:
 
   const material_pointer& default_material() const;
 
-  [[nodiscard]] std::vector<material_pointer> const& materials() const noexcept {
+  /*[[nodiscard]] std::vector<material_pointer> const& materials() const noexcept {
     return m_available_materials;
-  }
+  }*/
   [[nodiscard]] std::vector<sdf_pointer> const& sdfs() const noexcept {
     return m_available_sdfs;
   }
@@ -186,8 +204,11 @@ public:
   sdf::glsl_assembler const& get_sdf_assembler() {
     return m_sdf_assembler;
   }
-  material_glsl_assembler const& get_material_assembler() {
-    return m_material_assembler;
+  //material_glsl_assembler const& get_material_assembler() {
+  //  return m_material_assembler;
+  //}
+  material_buffer const& get_material_buffer() {
+    return m_material_buffer;
   }
 
   prepare_result_t prepare();
@@ -196,11 +217,15 @@ public:
     return m_scene_buffers;
   }
 
+  std::string generate_glsl() const {
+    return generate_object_loaders(m_type_registry) + m_material_types.generate_code();
+  }
+
 private:
   sdf::glsl_assembly& get_sdf_assembly(sdf_t* sdf);
   sdf::glsl_assembly const& get_sdf_assembly(const sdf_t* sdf);
-  parameter_buffer_description& get_material_assembly(material_pointer const& mat);
-  parameter_buffer_description const& get_material_assembly(material_pointer const& mat) const;
+  //parameter_buffer_description& get_material_assembly(material_pointer const& mat);
+  //parameter_buffer_description const& get_material_assembly(material_pointer const& mat) const;
 
   void erase_geometry_direct(const geometry_pointer& geometry);
   void erase_geometry_indirect(const geometry_pointer& geometry);
@@ -218,7 +243,7 @@ private:
   std::vector<aabb_t> m_last_drawable_aabbs;
 
   std::vector<geometry_pointer> m_available_geometries;
-  std::vector<material_pointer> m_available_materials;
+  //std::vector<material_pointer> m_available_materials;
   std::vector<sdf_pointer> m_available_sdfs;
   std::vector<std::unique_ptr<bvh>> m_object_bvhs;
   std::vector<geometry_pointer> m_erase_on_prepare;
@@ -231,11 +256,15 @@ private:
   std::vector<aligned_node_t> m_bvh_nodes;
   std::vector<index_type> m_bvh_indices;
   std::vector<float> m_sdf_parameter_buffer;
-  std::vector<float> m_material_parameter_buffer;
+  //std::vector<float> m_material_parameter_buffer;
   std::vector<material_reference_t> m_material_references;
   std::vector<drawable_sdf_t> m_sdf_drawables;
 
-  material_glsl_assembler m_material_assembler;
+  //material_glsl_assembler m_material_assembler;
+  myrt::types_registry m_type_registry;
+  material_registry m_material_types;
+  material_buffer m_material_buffer;
+  // material_registry m_material_registry;
   sdf::glsl_assembler m_sdf_assembler;
   std::unique_ptr<bvh> m_global_bvh;
   material_pointer m_default_material;
@@ -256,24 +285,25 @@ inline void scene::set_parameter(const sdf_t* sdf, std::shared_ptr<parameter> co
   get_sdf_assembly(sdf).buffer_description.set_value(m_sdf_parameter_buffer.data(), parameter, std::forward<T>(value));
 }
 
-template <typename T>
-void scene::set_parameter(const material_pointer& material, std::shared_ptr<parameter> const& parameter, T&& value) {
-  get_material_assembly(material).set_value(m_material_parameter_buffer.data(), parameter, std::forward<T>(value));
-  m_materials_buffer_changed = true;
-}
+//template <typename T>
+//void scene::set_parameter(const material_pointer& material, std::shared_ptr<parameter> const& parameter, T&& value) {
+//  get_material_assembly(material).set_value(m_material_parameter_buffer.data(), parameter, std::forward<T>(value));
+//}
 
 template <typename T> void scene::set_parameter(const material_pointer& material, std::string const& name, T&& value) {
-  set_parameter(material, get_parameter(material, name), std::forward<T>(value));
+  //set_parameter(material, get_parameter(material, name), std::forward<T>(value));
+  m_material_buffer.set(*material, name, std::forward<T>(value));
+  m_materials_buffer_changed = true;
 }
+//
+//template <typename T>
+//inline T scene::get_parameter_value(const material_pointer& material, std::shared_ptr<parameter> const& param) {
+//  return get_material_assembly(material).get_value<T>(m_material_parameter_buffer.data(), param);
+//}
 
-template <typename T>
-inline T scene::get_parameter_value(const material_pointer& material, std::shared_ptr<parameter> const& param) {
-  return get_material_assembly(material).get_value<T>(m_material_parameter_buffer.data(), param);
-}
-
-template <typename T> inline T scene::get_parameter_value(const material_pointer& material, std::string const& name) {
-  return get_parameter_value<T>(material, get_parameter(material, name));
-}
+//template <typename T> inline T scene::get_parameter_value(const material_pointer& material, std::string const& name) {
+//  return get_parameter_value<T>(material, get_parameter(material, name));
+//}
 
 template <typename T> void sdf_object::set(std::shared_ptr<parameter> const& parameter, T&& value) {
   get_scene()->set_parameter(sdf, parameter, std::forward<T>(value));

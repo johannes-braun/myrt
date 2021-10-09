@@ -32,9 +32,11 @@ namespace myrt
       if (sub1.empty())
         return str;
 
-      std::size_t pos;
-      while ((pos = str.find(sub1)) != std::string::npos)
+      std::size_t pos = 0;
+      while ((pos = str.find(sub1, pos)) != std::string::npos) {
         str.replace(pos, sub1.size(), sub2);
+        pos += sub2.size();
+      }
 
       return str;
     }

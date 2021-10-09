@@ -107,13 +107,8 @@ struct material_sample_t
   float pdf;
 };
 
-#define _G(P) materials_data[P]
-#define _MTY(I) materials[I].id
-#define _MBO(I) materials[I].offset
+#define load_float(ID) materials_data[ID]
 #include "material.glsl"
-#undef _G
-#undef _MTY
-#undef _MBO
 
 void main() {
   uint id = gl_GlobalInvocationID.x;
@@ -139,13 +134,13 @@ void main() {
     float rx = random_value(int(int(56128966 * gen.random_value) + 20945293*id));
     float ry = random_value(int(int(12233432 * gen.random_value) + 74867839*id));
     
-    material_load(trace.material_index);
+    open(materials[trace.material_index].id, materials[trace.material_index].offset);
 
     vec2 material_randoms = vec2(random_next(), random_next());
-    vec3 generated = material_continue_ray(material_randoms, -gen.direction, trace.normal);
+    vec3 generated = bounce(material_randoms, -gen.direction, trace.normal);
 
     material_sample_t material;
-    material_sample(trace.point, trace.uv, trace.normal, generated, -gen.direction, material.reflectance, material.pdf);
+    evaluate(trace.point, trace.uv, trace.normal, generated, -gen.direction, material.reflectance, material.pdf);
 
    { // Russian roulette
      float p = (gen.pdf) * 1;
@@ -175,7 +170,7 @@ void main() {
       material_sample_t light_material;
       light_material.pdf = 1;
       light_material.reflectance = vec3(1);
-      material_sample(trace.point, trace.uv, trace.normal, trace.light_direction, -gen.direction, light_material.reflectance, light_material.pdf);
+      evaluate(trace.point, trace.uv, trace.normal, trace.light_direction, -gen.direction, light_material.reflectance, light_material.pdf);
       
       if(!any(isinf(light_material.reflectance)) && !any(isinf(light_material.reflectance)))
         gen.color += vec4(unpackUnorm4x8(trace.light_color).rgb * trace.light_strength * clamp(light_material.reflectance, 0, 1), 0);

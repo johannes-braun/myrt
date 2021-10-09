@@ -502,7 +502,8 @@ namespace myrt {
     color_file.file_path = res_dir / "../src/pt/pt_color.comp";
     glsp::definition mat_inject;
     mat_inject.name = "MYRT_INJECT_MATERIAL_CODE_HERE";
-    mat_inject.info.replacement = m_last_scene->get_material_assembler().get_assembled_glsl();
+    //mat_inject.info.replacement = m_last_scene->get_material_assembler().get_assembled_glsl();
+    mat_inject.info.replacement = m_last_scene->generate_glsl();
     color_file.definitions = { mat_inject };
     color_file.expand_in_macros = true;
 

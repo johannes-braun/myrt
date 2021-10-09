@@ -1,7 +1,7 @@
 #include "scene.hpp"
 #include <algorithm>
-#include "material.hpp"
 #include <mygl/mygl.hpp>
+#include "../material.hpp"
 
 namespace myrt {
 struct geometry_t {
@@ -10,12 +10,12 @@ struct geometry_t {
   aabb_t aabb;
   scene* scene = nullptr;
 };
-
-struct material_t {
-  int index;
-  parameter_buffer_description buffer_description;
-  std::shared_ptr<material> material;
-};
+//
+//struct material_t {
+//  int index;
+//  parameter_buffer_description buffer_description;
+//  std::shared_ptr<material> material;
+//};
 
 struct sdf_t {
   sdf_info_t info;
@@ -69,9 +69,9 @@ scene::geometry_pointer scene::push_geometry(std::span<index_type const> indices
 
   return std::shared_ptr<geometry_t>(ptr.get(), [this, ptr](geometry_t*) mutable { erase_geometry_direct(ptr); });
 }
-std::shared_ptr<material_type> scene::type_of(material_pointer const& material) const {
-  return material->material->type();
-}
+//std::shared_ptr<material_type> scene::type_of(material_pointer const& material) const {
+//  return material->material->type();
+//}
 /*void scene::update_material(material_pointer const& material, const material_info_t& info)
 {
   m_material_infos.at(material->index) = info;
@@ -154,37 +154,37 @@ void scene::erase_geometry_direct(const geometry_pointer& geometry) {
     m_drawables.clear();
   }
 }
-scene::material_pointer scene::push_material(std::shared_ptr<material> type) {
-  m_materials_changed = true;
-  m_materials_buffer_changed = true;
-
-  auto const& ptr = m_available_materials.emplace_back(std::make_unique<material_t>());
-  ptr->index = static_cast<int>(m_material_references.size());
-  ptr->buffer_description = m_material_assembler.append(type);
-  ptr->buffer_description.base_offset = 0;
-  // ptr->buffer_description.base_offset += static_cast<int>(m_material_parameter_buffer.size());
-  ptr->material = type;
-  m_material_references.push_back(
-      material_reference_t{.id = ptr->buffer_description.id, .offset = ptr->buffer_description.base_offset});
-  m_material_parameter_buffer.resize(m_material_parameter_buffer.size() + ptr->buffer_description.blocks_required);
-  ptr->buffer_description.apply_defaults(m_material_parameter_buffer);
-  // m_material_infos.push_back(std::move(info));
-
-  return std::shared_ptr<material_t>(ptr.get(), [this, ptr](material_t*) mutable {
-    // todo...
-  });
-}
-std::shared_ptr<parameter> scene::get_parameter(const material_pointer& material, std::string const& name) const {
-  if (auto const it = material->material->parameters().find(name); it != material->material->parameters().end())
-    return it->second;
-  return nullptr;
-}
-parameter_buffer_description& scene::get_material_assembly(material_pointer const& mat) {
-  return mat->buffer_description;
-}
-parameter_buffer_description const& scene::get_material_assembly(material_pointer const& mat) const {
-  return mat->buffer_description;
-}
+//scene::material_pointer scene::push_material(std::shared_ptr<material> type) {
+//  m_materials_changed = true;
+//  m_materials_buffer_changed = true;
+//
+//  auto const& ptr = m_available_materials.emplace_back(std::make_unique<material_t>());
+//  ptr->index = static_cast<int>(m_material_references.size());
+//  ptr->buffer_description = m_material_assembler.append(type);
+//  ptr->buffer_description.base_offset = 0;
+//  // ptr->buffer_description.base_offset += static_cast<int>(m_material_parameter_buffer.size());
+//  ptr->material = type;
+//  m_material_references.push_back(
+//      material_reference_t{.id = ptr->buffer_description.id, .offset = ptr->buffer_description.base_offset});
+//  m_material_parameter_buffer.resize(m_material_parameter_buffer.size() + ptr->buffer_description.blocks_required);
+//  ptr->buffer_description.apply_defaults(m_material_parameter_buffer);
+//  // m_material_infos.push_back(std::move(info));
+//
+//  return std::shared_ptr<material_t>(ptr.get(), [this, ptr](material_t*) mutable {
+//    // todo...
+//  });
+//}
+//std::shared_ptr<parameter> scene::get_parameter(const material_pointer& material, std::string const& name) const {
+//  if (auto const it = material->material->parameters().find(name); it != material->material->parameters().end())
+//    return it->second;
+//  return nullptr;
+//}
+//parameter_buffer_description& scene::get_material_assembly(material_pointer const& mat) {
+//  return mat->buffer_description;
+//}
+//parameter_buffer_description const& scene::get_material_assembly(material_pointer const& mat) const {
+//  return mat->buffer_description;
+//}
 
 scene::sdf_pointer scene::push_sdf(sdf_info_t info) {
   auto const assembly = m_sdf_assembler.append(info.root);
@@ -256,7 +256,7 @@ void scene::enqueue(geometry_t const* geometry, material_t const* material, rnu:
   m_drawables.push_back(drawable_geometry_t{.transformation = transformation,
       .inverse_transformation = inverse(transformation),
       .geometry_info = geometry->info,
-      .material_index = material ? material->index : 0,
+      .material_index = int(material ? material->index : 0ull),
       .geometry_index = geometry->index});
 
   m_current_drawable_hash ^= hash(geometry, material, transformation);
@@ -363,7 +363,7 @@ scene::prepare_result_t scene::prepare() {
   }
   if (m_materials_buffer_changed) {
     m_materials_buffer_changed = false;
-    fill_buffer(m_scene_buffers.materials_data_buffer, m_material_parameter_buffer);
+    fill_buffer(m_scene_buffers.materials_data_buffer, m_material_buffer.buffer());
     result.materials_buffer_changed = true;
   }
   if (m_geometries_changed) {

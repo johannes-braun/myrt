@@ -25,13 +25,8 @@ layout(binding = 2, std430) restrict readonly buffer MaterialsDataBuffer { float
 #include "../transform.glsl"
 #include "../random.glsl"
 
-#define _G(P) materials_data[P]
-#define _MTY(I) materials[I].id
-#define _MBO(I) materials[I].offset
+#define load_float(ID) materials_data[ID]
 #include "../material.glsl"
-#undef _G
-#undef _MTY
-#undef _MBO
 
 #include "../ggx.glsl"
 
@@ -123,24 +118,24 @@ void main()
       vec3 check_point = position - 1000 * light_dir;
       float l1 = distance(check_point, shadow_map_pos);
       
-      float diff = float(l1 - 1000 < 0.12);
+      float diff = float(l1 - 1000 < 0.02);
       avg_diff += diff;
     }
   }  
   float shadow = avg_diff / ((2 * r + 1) * (2 * r + 1));
 
 
-  material_load(material);
+  open(int(materials[material].id), int(materials[material].offset));
   pbr_state = s_diffuse;
   vec3 ref = vec3(0);
   float pdf = 1;
-  material_sample(position, uv, normal, light_dir, to_cam, ref, pdf);
+  evaluate(position, uv, normal, light_dir, to_cam, ref, pdf);
 
 
   vec3 refgb = vec3(0);
   float refpdf = 1;
   pbr_state = s_diffuse;
-  material_sample(position, uv, normal, normal, to_cam, refgb, refpdf);
+  evaluate(position, uv, normal, normal, to_cam, refgb, refpdf);
 
   float freeness = 0;
   const float ssao_distance = 0.02;
