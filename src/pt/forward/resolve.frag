@@ -9,6 +9,11 @@ uniform mat4 view;
 uniform mat4 proj;
 uniform uint random_seed;
 
+// Shadow
+uniform mat4 shadow_view;
+uniform mat4 shadow_proj;
+layout(binding = 1) uniform sampler2D shadow_map;
+
 struct material_reference_t
 {
   int id;
@@ -78,7 +83,6 @@ void main()
     return;
   }
   vec3 to_cam = normalize(cam_pos - gbuf_position.xyz);
-  vec3 ld = normalize(vec3(10, 10, 20));
 
   vec3 normal = normalize(gbuf_norm_mat.xyz);
   normal = faceforward(normal, -to_cam, normal);
@@ -86,23 +90,54 @@ void main()
   vec2 uv = gbuf_uv.xy;
   int material = int(gbuf_norm_mat.w);
 
+  //Position
+  vec4 shadow_pos = shadow_view * vec4(position, 1);
+  vec4 shadow_pixel = shadow_proj * shadow_pos;
+  vec4 shadow_dir = (inverse(shadow_view)) * vec4(0, 0, 1, 0);
+  vec3 light_dir = normalize(shadow_dir.xyz);
+  vec2 shadow_uv = ((shadow_pixel.xy / shadow_pixel.w) + 1) / 2;
+  vec2 shadow_map_size = textureSize(shadow_map, 0);
+
+  random_init_nt(pixel, int(random_seed + 9897584*uint(position.x) ^uint(position.y) ^uint(position.z)));
+
+  float maxdiff = 0.0;
+  float mindiff = 1.0 / 0.0;
+  float avg_diff = 0;
+  int r = 1;
+
+  for(int i=-r; i<=r; ++i)
+  {
+    for(int j = -r; j <= r; ++j)
+    { 
+      vec2 hs = 2*random_next_2d() - 1;
+
+      vec3 shadow_map_pos = texture(shadow_map, shadow_uv + 1.5*hs / shadow_map_size).xyz;
+      vec3 check_point = position - 1000 * light_dir;
+      float l1 = distance(check_point, shadow_map_pos);
+      
+      float diff = float(l1 - 1000 < 0.12);
+      avg_diff += diff;
+    }
+  }  
+  float shadow = avg_diff / ((2 * r + 1) * (2 * r + 1));
+
+
   material_load(material);
   pbr_state = s_diffuse;
   vec3 ref = vec3(0);
   float pdf = 1;
-  material_sample(position, uv, normal, ld, to_cam, ref, pdf);
+  material_sample(position, uv, normal, light_dir, to_cam, ref, pdf);
 
 
   vec3 refgb = vec3(0);
+  float refpdf = 1;
   pbr_state = s_diffuse;
-  material_sample(position, uv, normal, normal, to_cam, refgb, pdf);
+  material_sample(position, uv, normal, normal, to_cam, refgb, refpdf);
 
   float freeness = 0;
-  const float ssao_distance = 0.42;
+  const float ssao_distance = 0.22;
   const float ssao_fac = 0.1;
-  int samplesxy = 8;
-
-  random_init_nt(pixel, int(random_seed + 9897584*uint(position.x) ^uint(position.y) ^uint(position.z)));
+  int samplesxy = 16;
 
   for(int x = 0; x < samplesxy; ++x)
   {
@@ -145,8 +180,12 @@ void main()
 
   freeness = pow(freeness, 1);
 
-  vec4 color0 = vec4((refgb / pdf + ref / pdf * max(0, dot(normal, ld))), 1);
+  vec4 color0 = vec4((refgb /refpdf  + ref / pdf * shadow * max(0, dot(normal, light_dir))), 1);
   vec4 color1 = freeness * color0;
 
   color = color1;
+  if(any(isnan(color)))
+  {
+    color = vec4(0);
+  }
 }

@@ -5,6 +5,7 @@
 #include "bindings.hpp"
 #include <filesystem>
 #include <glsp/glsp.hpp>
+#include <rnu/camera.hpp>
 
 namespace myrt
 {
@@ -13,9 +14,6 @@ namespace myrt
   std::shared_ptr<texture_t> forward_renderer::run(texture_provider_t& provider, scene& scene, int width, int height)
   {
     auto const prepare = scene.prepare();
-
-    if (!glIsFramebuffer(m_framebuffer))
-      glCreateFramebuffers(1, &m_framebuffer);
 
     if (prepare.drawables_changed)
     {
@@ -43,11 +41,18 @@ namespace myrt
     }
     if (!m_depth_texture)
       m_depth_texture = provider.get(GL_TEXTURE_2D, GL_DEPTH24_STENCIL8, width, height, 1);
+    if (!m_shadow_map)
+      m_shadow_map = provider.get(GL_TEXTURE_2D, GL_RGBA16F, 2048, 2048, 1);
+    if (!m_shadow_pass_depth)
+      m_shadow_pass_depth = provider.get(GL_TEXTURE_2D, GL_DEPTH24_STENCIL8, 2048, 2048, 1);
 
     glViewport(0, 0, width, height);
     glClearColor(0,0,0,0);
     pass_gen_multidraw(scene);
     pass_render(scene);
+    glViewport(0, 0, 2048, 2048);
+    pass_shadow(scene);
+    glViewport(0, 0, width, height);
     pass_resolve(scene);
 
     return m_result_texture;
@@ -129,6 +134,9 @@ namespace myrt
       m_render = program.value();
       load_render_bindings();
     }
+
+    if (!glIsFramebuffer(m_framebuffer))
+      glCreateFramebuffers(1, &m_framebuffer);
   }
   void forward_renderer::load_render_bindings()
   {
@@ -188,7 +196,6 @@ namespace myrt
     glUniformMatrix4fv(m_render_bindings.proj, 1, false, m_projection.data());
 
     glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, nullptr, m_num_multidraws, sizeof(multi_draw_indirect_t));
-
   }
   void forward_renderer::create_resolve_shader(scene& scene) {
     glsp::preprocess_file_info vs_info;
@@ -224,6 +231,10 @@ namespace myrt
     m_resolve_bindings.view = if_empty(uniform_location(m_resolve_program, "view"));
     m_resolve_bindings.proj = if_empty(uniform_location(m_resolve_program, "proj"));
     m_resolve_bindings.random_seed = if_empty(uniform_location(m_resolve_program, "random_seed"));
+
+    m_resolve_bindings.shadow_view = if_empty(uniform_location(m_resolve_program, "shadow_view"));
+    m_resolve_bindings.shadow_proj = if_empty(uniform_location(m_resolve_program, "shadow_proj"));
+    m_resolve_bindings.shadow_map  = if_empty(sampler_binding(m_resolve_program, "shadow_map"));
   }
   void forward_renderer::pass_resolve(scene& scene) {
     if (!glIsProgram(m_resolve_program)) {
@@ -241,9 +252,80 @@ namespace myrt
         GL_SHADER_STORAGE_BUFFER, m_resolve_bindings.material_data, scene.get_scene_buffers().materials_data_buffer);
     glUniformMatrix4fv(m_resolve_bindings.view, 1, false, m_view.data());
     glUniformMatrix4fv(m_resolve_bindings.proj, 1, false, m_projection.data());
+
+    glBindTextureUnit(m_resolve_bindings.shadow_map, m_shadow_map->id());
+    glUniformMatrix4fv(m_resolve_bindings.shadow_view, 1, false, m_shadow_view.data());
+    glUniformMatrix4fv(m_resolve_bindings.shadow_proj, 1, false, m_shadow_proj.data());
+    
     glUniform1ui(m_resolve_bindings.random_seed, m_dist(m_rng));
 
     glBindVertexArray(m_resolve_vertex_array);
     glDrawArrays(GL_TRIANGLES, 0, 3);
+  }
+  void forward_renderer::create_shadow_shader() {
+    glsp::preprocess_file_info vs_info;
+    vs_info.definitions.push_back(glsp::definition{"FORWARD_ONLY_POSITION"});
+    vs_info.file_path = res_dir / "../src/pt/forward/vert.vert";
+    const auto vertex_shader = glsp::preprocess_file(vs_info);
+
+    glsp::preprocess_file_info fs_info;
+    fs_info.definitions.push_back(glsp::definition{"FORWARD_ONLY_POSITION"});
+    fs_info.file_path = res_dir / "../src/pt/forward/frag.frag";
+    const auto fragment_shader = glsp::preprocess_file(fs_info);
+
+    const auto program = make_program(vertex_shader.contents, fragment_shader.contents);
+    if (program) {
+      if (glIsProgram(m_shadow_program))
+        glDeleteProgram(m_shadow_program);
+
+      m_shadow_program = program.value();
+      load_shadow_bindings();
+    }
+    if (!glIsFramebuffer(m_shadow_framebuffer))
+      glCreateFramebuffers(1, &m_shadow_framebuffer);
+  }
+  void forward_renderer::load_shadow_bindings() {
+    glUseProgram(m_shadow_program);
+    m_shadow_bindings.points_in = if_empty(input_location(m_shadow_program, "point"));
+    m_shadow_bindings.view = if_empty(uniform_location(m_shadow_program, "view"));
+    m_shadow_bindings.proj = if_empty(uniform_location(m_shadow_program, "proj"));
+    m_shadow_bindings.geometries = if_empty(storage_buffer_binding(m_shadow_program, "Geometries"));
+
+    if (!glIsVertexArray(m_shadow_vertex_array)) {
+      glCreateVertexArrays(1, &m_shadow_vertex_array);
+
+      glEnableVertexArrayAttrib(m_shadow_vertex_array, m_shadow_bindings.points_in);
+      glVertexArrayAttribFormat(m_shadow_vertex_array, m_shadow_bindings.points_in, 4, GL_FLOAT, false, 0);
+      glVertexArrayAttribBinding(m_shadow_vertex_array, m_shadow_bindings.points_in, 0);
+    }
+  }
+  void forward_renderer::pass_shadow(scene& scene) {
+    if (!glIsProgram(m_shadow_program)) {
+      create_shadow_shader();
+    }
+
+    glNamedFramebufferTexture(m_shadow_framebuffer, GL_COLOR_ATTACHMENT0, m_shadow_map->id(), 0);
+    glNamedFramebufferTexture(m_shadow_framebuffer, GL_DEPTH_ATTACHMENT, m_shadow_pass_depth->id(), 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_shadow_framebuffer);
+
+    glDisable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glUseProgram(m_shadow_program);
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, m_multidraw_buffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, m_shadow_bindings.geometries, scene.get_scene_buffers().drawable_buffer);
+
+    glBindVertexArray(m_shadow_vertex_array);
+    glVertexArrayVertexBuffer(m_shadow_vertex_array, 0, scene.get_scene_buffers().vertices_buffer, 0, sizeof(rnu::vec4));
+    glVertexArrayElementBuffer(m_shadow_vertex_array, scene.get_scene_buffers().indices_buffer);
+    rnu::mat4 view = inverse(rnu::rotation(rnu::quat(rnu::vec3(1, 0, 0), rnu::radians(-45))) * rnu::translation(rnu::vec3(0, 0, 15)));
+
+    m_shadow_view = view;
+    m_shadow_proj = rnu::cameraf::orthographic(-20, 20, 20, -20, 0.01, 1000.0);
+    glUniformMatrix4fv(m_shadow_bindings.view, 1, false, m_shadow_view.data());
+    glUniformMatrix4fv(m_shadow_bindings.proj, 1, false, m_shadow_proj.data());
+
+    glMultiDrawElementsIndirect(
+        GL_TRIANGLES, GL_UNSIGNED_INT, nullptr, m_num_multidraws, sizeof(multi_draw_indirect_t));
   }
   }

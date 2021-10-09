@@ -858,7 +858,7 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
 
   auto const import_scale = 4;
 
-  entities.push_back(ecs.create_entity(object_component{.object = load_object_file(scene, "fischl/fischl.obj", import_scale)},
+  entities.push_back(ecs.create_entity(object_component{.object = load_object_file(scene, "bunnyonplate.obj", import_scale)},
       transform_component{}, object_ui_component{}));
 
   myrt::async_resource<std::pair<std::uint32_t, std::uint32_t>> cube_resource(loading_pool, [] {
@@ -998,8 +998,6 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
     bloom.blur_step = step;
     result = bloom.process(global_texture_provider, result->id());
     result = tonemap.process(global_texture_provider, result->id());
-    result = fxaa.process(global_texture_provider, result->id());
-    //result = denoise.process(global_texture_provider, result->id());
     result = fxaa.process(global_texture_provider, result->id());
     glNamedFramebufferTexture(fbo, GL_COLOR_ATTACHMENT0, result->id(), 0);
     glBlitNamedFramebuffer(fbo, 0, 0, 0, size.x, size.y, 0, 0, size.x, size.y, GL_COLOR_BUFFER_BIT, GL_NEAREST);

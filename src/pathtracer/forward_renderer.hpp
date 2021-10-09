@@ -39,6 +39,10 @@ namespace myrt
     void load_resolve_bindings();
     void pass_resolve(scene& scene);
 
+    void create_shadow_shader();
+    void load_shadow_bindings();
+    void pass_shadow(scene& scene);
+
     struct {
       std::int32_t geometries;
       std::int32_t multidraws;
@@ -74,6 +78,10 @@ namespace myrt
       std::int32_t materials;
       std::int32_t material_data;
       std::int32_t random_seed;
+
+      std::int32_t shadow_view;
+      std::int32_t shadow_proj;
+      std::int32_t shadow_map;
     } m_resolve_bindings;
     std::uint32_t m_resolve_program;
 
@@ -85,7 +93,22 @@ namespace myrt
       std::int32_t view;
       std::int32_t proj;
     } m_render_bindings;
-
     std::uint32_t m_render;
+
+
+    struct {
+      std::int32_t geometries;
+      std::int32_t points_in;
+      std::int32_t view;
+      std::int32_t proj;
+    } m_shadow_bindings;
+    std::uint32_t m_shadow_program;
+    std::uint32_t m_shadow_framebuffer;
+    std::shared_ptr<texture_t> m_shadow_map;
+    std::shared_ptr<texture_t> m_shadow_pass_depth;
+    std::uint32_t m_shadow_vertex_array;
+
+    rnu::mat4 m_shadow_view;
+    rnu::mat4 m_shadow_proj;
   };
 }
