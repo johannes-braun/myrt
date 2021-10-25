@@ -21,6 +21,14 @@
 #include "types.hpp"
 #include "material.hpp"
 
+#define CL_HPP_MINIMUM_OPENCL_VERSION 120
+#define CL_HPP_TARGET_OPENCL_VERSION  120
+#include <CL/cl2.hpp>
+#include "gl_current.hpp"
+//
+//#include <vulkan/vulkan.hpp>
+//#include <shaderc/shaderc.hpp>
+
 namespace stbi {
 template <typename T> struct deleter {
   void operator()(T* data) const {
@@ -62,6 +70,33 @@ struct ldr_image : image_info {
   image_data<stbi_uc> data;
 };
 } // namespace stbi
+
+enum class residence { none, resident };
+
+template <residence Residence>
+auto ldr_texture(std::filesystem::path const& path, GLenum format = GL_RGB8, GLenum wrap = GL_REPEAT) {
+  std::uint32_t texture{};
+  glCreateTextures(GL_TEXTURE_2D, 1, &texture);
+  glTextureParameterf(texture, GL_TEXTURE_MAX_ANISOTROPY, 16.f);
+  glTextureParameteri(texture, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTextureParameteri(texture, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTextureParameteri(texture, GL_TEXTURE_WRAP_R, wrap);
+  glTextureParameteri(texture, GL_TEXTURE_WRAP_S, wrap);
+  glTextureParameteri(texture, GL_TEXTURE_WRAP_T, wrap);
+
+  stbi::ldr_image image(path, 3);
+  glTextureStorage2D(texture, log2(std::max(image.width, image.height)) + 1, format, image.width, image.height);
+  glTextureSubImage2D(texture, 0, 0, 0, image.width, image.height, GL_RGB, GL_UNSIGNED_BYTE, image.data.get());
+  glGenerateTextureMipmap(texture);
+
+  if constexpr (Residence == residence::none) {
+    return texture;
+  } else {
+    auto handle = glGetTextureHandleARB(texture);
+    glMakeTextureHandleResidentARB(handle);
+    return std::make_pair(texture, handle);
+  }
+}
 
 const static std::filesystem::path res_dir = "../../../res";
 
@@ -135,6 +170,7 @@ void write_expr(std::ostream& o, myrt::xgl::expr_entity const& e) {
 #endif // CHECK_XGL_STUFF
 
 int main(int argc, char** argv) {
+  // myrt::run_testing();
 #ifdef CHECK_XGL_STUFF
   std::ifstream file_stream("C:\\Users\\johan\\Documents\\Projekte\\myrt\\src\\myrt.xgl\\test.xgl", std::ios::binary);
   std::string source((std::istreambuf_iterator<char>(file_stream)), std::istreambuf_iterator<char>());
@@ -295,6 +331,7 @@ public:
 
 struct draw_t {
   transform_component* t;
+  rnu::cameraf* c;
 
   void operator()(std::vector<myrt::geometric_object>& obj) const {
     auto pm = t->matrix();
@@ -310,8 +347,10 @@ struct draw_t {
 
 struct object_system : public myrt::typed_system<object_component, transform_component> {
 public:
+  rnu::cameraf* camera;
+
   void update(duration_type delta, object_component* o, transform_component* t) const override {
-    std::visit(draw_t{.t = t}, o->object);
+    std::visit(draw_t{.t = t, .c = camera}, o->object);
   }
 };
 
@@ -424,44 +463,10 @@ public:
   }
 };
 
-auto const type_json = R"(
-{
-  "name": "my_type",
-  "members": [
-    {"my_param": "float"},
-    {"my_purr": "int"},
-    {"my_material": "material"},
-    {"my_color": "color_t"}
-  ]
-}
-)";
-
 static myrt::material_buffer::material_type_t pbr_material_type;
 
-//
-//static myrt::basic_material_type pbr_material_type = [] {
-//  std::map<std::string, std::shared_ptr<myrt::parameter_type>> pars;
-//  nlohmann::json j = nlohmann::json::parse(R"(
-//{
-//  "parameters": {
-//    "albedo": "vec4",
-//    "ior": "float",
-//    "roughness": "float",
-//    "metallic": "float",
-//    "transmission": "float",
-//    "albedo_texture": "uvec2"
-//  },
-//  "source": "${sourceDir}/file.glsl"
-//}
-//)");
-//  for (auto const& [key, value] : j["parameters"].get<nlohmann::json::object_t>()) {
-//    pars[key] = myrt::type_registry[value];
-//  }
-//  return myrt::basic_material_type(pars, pbr_material_glsl);
-//}();
-
 std::vector<myrt::geometric_object> gen_terrain(myrt::scene& scene) {
-  int size = 128;
+  int size = 32;
 
   std::vector<float> heights(size * size);
   std::generate(begin(heights), end(heights), [] { return 0.f; });
@@ -487,6 +492,11 @@ std::vector<myrt::geometric_object> gen_terrain(myrt::scene& scene) {
       rnu::vec2 u11(0 + 1, 0 + 1);
 
       std::uint32_t const base_index = positions.size();
+
+      u00 = u00;
+      u01 = u01;
+      u11 = u11;
+      u10 = u10;
 
       uvs.push_back(u00);
       uvs.push_back(u10);
@@ -514,11 +524,13 @@ std::vector<myrt::geometric_object> gen_terrain(myrt::scene& scene) {
   }
 
   auto pbrmat0 = scene.push_material(pbr_material_type);
-  scene.set_parameter(pbrmat0, "albedo", rnu::vec4ui8(255*rnu::vec4(0.2, 0.6, 0.2, 1)));
+  scene.set_parameter(pbrmat0, "albedo", rnu::vec4ui8(255 * rnu::vec4(0.1, 0.4, 0.0, 1)));
   scene.set_parameter(pbrmat0, "ior", 1.4f);
   scene.set_parameter(pbrmat0, "roughness", 0.8f);
   scene.set_parameter(pbrmat0, "transmission", 0.f);
-  scene.set_parameter(pbrmat0, "albedo_texture", rnu::vec2ui(0));
+  auto [texture, handle] =
+      ldr_texture<residence::resident>(res_dir / "grass/CartoonyGround_basecolor.png", GL_RGB8, GL_REPEAT);
+  scene.set_parameter(pbrmat0, "albedo_texture", handle);
 
   auto gob = scene.push_geometry(indices, positions, normals, uvs);
 
@@ -531,35 +543,11 @@ std::vector<myrt::geometric_object> gen_terrain(myrt::scene& scene) {
 }
 
 void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
+
+
   myrt::thread_pool loading_pool;
   myrt::gl::start(*window);
   std::format_to(std::ostreambuf_iterator(std::cout), "{} starting...", "Rendering");
-
-  //myrt::types_registry registry;
-  //registry.create<color_object_type>();
-  //registry.create<material_object_type>();
-
-  ////nlohmann::json j = nlohmann::json::parse(type_json);
-  ////auto dynamic_type = std::make_shared<myrt::object_type>(j["name"]);
-  ////for (auto const& x : j["members"]) {
-  ////  for (auto const& [key, value] : x.get<nlohmann::json::object_t>()) {
-  ////    dynamic_type->add_parameter(key, registry.find(value));
-  ////  }
-  ////}
-  ////registry.push_back(std::move(dynamic_type));
-
-  ////auto const genc = myrt::generate_object_loaders(registry);
-
-  //buffer << t.rdbuf();
-  //myrt::material_registry mat_reg;
-  //pbr_material_type = mat_reg.push_type(registry.find_object_type("material"), buffer.str());
-  //mat_reg.push_type(registry.find_object_type("color_t"), buffer.str());
-
-
-
-
-  //auto glslsl = myrt::generate_object_loaders(registry) + mat_reg.generate_code();
-
 
   myrt::scene scene;
   myrt::sequential_pathtracer pathtracer_renderer;
@@ -569,9 +557,15 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
   std::stringstream buffer;
   buffer << t.rdbuf();
 
+  int max_textures = 0;
+  glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &max_textures);
+
+  glBindTextureUnit(195, 1);
+
+  std::cout << max_textures << '\n';
+
   scene.register_type<color_object_type>();
   pbr_material_type = scene.push_material_type(scene.register_type<material_object_type>(), buffer.str());
-
 
   pathtracer_renderer.set_dof_enabled(true);
   pathtracer_renderer.set_lens_size({0.2, 0.2});
@@ -585,14 +579,16 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
   object_ui_system geo_ui_system;
   render_system render_system;
   renderer_ui_system render_ui_system;
-  bouncer_system bouncer_system;
 
   myrt::system_list systems;
   systems.add(object_system);
-  systems.add(bouncer_system);
   systems.add(geo_ui_system);
   systems.add(render_system);
   systems.add(render_ui_system);
+
+  myrt::system_list parsys;
+  bouncer_system bouncer_system;
+  parsys.add(bouncer_system);
 
   myrt::texture_provider_t global_texture_provider;
   auto const render_entity =
@@ -603,37 +599,54 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
   rc->scene = &scene;
 
   render_entity->get<camera_component>()->camera = {rnu::vec3{0.0f, 1.0f, 3.f}};
-
+  object_system.camera = &render_entity->get<camera_component>()->camera;
   auto const import_scale = 1;
 
   object_component instance{.object = load_object_file(scene, "ball.obj", 1)};
-  entities.push_back(ecs.create_entity(instance, transform_component{.position = rnu::vec3(0, 3, 0), .scale = rnu::vec3(0.1f)},
-          object_ui_component{}, bouncer_component{.radius=0.1f}));
+  entities.push_back(
+      ecs.create_entity(instance, transform_component{.position = rnu::vec3(0, 3, 0), .scale = rnu::vec3(0.1f)},
+          object_ui_component{}, bouncer_component{.radius = 0.1f}));
 
   object_component terrain{.object = gen_terrain(scene)};
   entities.push_back(ecs.create_entity(terrain, transform_component{}, object_ui_component{}));
 
-  object_component fsf{.object = load_object_file(scene, "fischl/fischl.obj", 1)};
+  object_component fsf{.object = load_object_file(scene, "ball.obj", 3)};
   entities.push_back(
-      ecs.create_entity(fsf, transform_component{.position = rnu::vec3(0, 0, 1)},
-          object_ui_component{}));
+      ecs.create_entity(fsf, transform_component{.position = rnu::vec3(0.5, 0.28, 1)}, object_ui_component{}));
+  object_component fsf1{.object = load_object_file(scene, "ball.obj", 1)};
+  entities.push_back(ecs.create_entity(
+      fsf1, transform_component{.position = rnu::vec3(-0.5, -0.02, 1), .scale = {0.5}}, object_ui_component{}));
 
-  
-  object_component grass{.object = load_object_file(scene, "grass.obj", 1)};
-  
+  /*
+  object_component fsf1x{.object = load_object_file(scene, "sponza/sponza.obj", 0.03f)};
+  entities.push_back(ecs.create_entity(
+      fsf1x, transform_component{}, object_ui_component{}));*/
+  // object_component fsf1{.object = load_object_file(scene, "mona.obj", 1)};
+  // entities.push_back(ecs.create_entity(
+  //    fsf1, transform_component{.position = rnu::vec3(-0.5, 0.0, 1)},
+  //        object_ui_component{}));
+
+  object_component grass{.object = load_object_file(scene, "floffre.obj", 1)};
+
   std::mt19937 gens;
-  std::uniform_real_distribution<float> dists(-64, 64);
+  std::uniform_real_distribution<float> dists(-16, 16);
+  std::uniform_real_distribution<float> distxs(0, 3.1415926535897);
+  std::uniform_real_distribution<float> distcs(0, 1.0);
 
-  for (int i = 0; i < 1000; ++i) {
+  for (int i = 0; i < 500; ++i) {
     auto pbrmat0 = scene.push_material(pbr_material_type);
-    scene.set_parameter(pbrmat0, "albedo", rnu::vec4ui8(255*rnu::vec4(0.2, 0.6, 0.2, 1)));
+    scene.set_parameter(pbrmat0, "albedo", rnu::vec4ui8(255 * rnu::vec4(distcs(gens), distcs(gens), distcs(gens), 1)));
     scene.set_parameter(pbrmat0, "ior", 1.4f);
     scene.set_parameter(pbrmat0, "roughness", 0.8f);
     scene.set_parameter(pbrmat0, "transmission", 0.f);
     scene.set_parameter(pbrmat0, "albedo_texture", rnu::vec2ui(0));
-    std::get<std::vector<myrt::geometric_object>>(grass.object)[0].material = pbrmat0;
-    entities.push_back(
-        ecs.create_entity(grass, transform_component{.position = rnu::vec3(dists(gens), 0, dists(gens))}));
+    auto go = std::get<std::vector<myrt::geometric_object>>(grass.object)[0];
+
+    go.material = pbrmat0;
+    object_component fsf1{.object = go};
+    entities.push_back(ecs.create_entity(fsf1, transform_component{.position = rnu::vec3(dists(gens), 0, dists(gens)),
+                                                   .scale = {0.1},
+                                                   .orientation = {rnu::vec3(0, 1, 0), distxs(gens)}}));
   }
 
   myrt::async_resource<std::pair<std::uint32_t, std::uint32_t>> cube_resource(loading_pool, [] {
@@ -641,30 +654,30 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
     return load_cubemap("gamrig");
   });
 
-  {
-    myrt::sdf_object abstract_art_sdf;
+  //{
+  //  myrt::sdf_object abstract_art_sdf;
 
-    myrt::sdf::vertical_capsule capsule(3.f, 0.5f);
-    myrt::sdf::sphere sphere(1.f);
-    sphere.transform(myrt::sdf::translate(rnu::vec3(0.5, 0, 0.5)).transform(myrt::sdf::mirror_axis{0}));
+  //  myrt::sdf::vertical_capsule capsule(3.f, 0.5f);
+  //  myrt::sdf::sphere sphere(1.f);
+  //  sphere.transform(myrt::sdf::translate(rnu::vec3(0.5, 0, 0.5)).transform(myrt::sdf::mirror_axis{0}));
 
-    myrt::sdf::smooth_union unite(0.3f);
-    unite.apply(sphere, capsule);
+  //  myrt::sdf::smooth_union unite(0.3f);
+  //  unite.apply(sphere, capsule);
 
-    myrt::sdf::sphere sphere2;
-    sphere2.link_parameter(sphere2[sphere.radius], sphere[sphere.radius]);
-    sphere2.transform(myrt::sdf::translate(rnu::vec3(0.5, 3, 0.5)).transform(myrt::sdf::mirror_axis{0}));
-    auto root = myrt::sdf::smooth_union{}.apply(sphere2, unite);
-    root.link_parameter(root[unite.factor], unite[unite.factor]);
+  //  myrt::sdf::sphere sphere2;
+  //  sphere2.link_parameter(sphere2[sphere.radius], sphere[sphere.radius]);
+  //  sphere2.transform(myrt::sdf::translate(rnu::vec3(0.5, 3, 0.5)).transform(myrt::sdf::mirror_axis{0}));
+  //  auto root = myrt::sdf::smooth_union{}.apply(sphere2, unite);
+  //  root.link_parameter(root[unite.factor], unite[unite.factor]);
 
-    abstract_art_sdf.name = "Abstract Art";
-    abstract_art_sdf.sdf = scene.push_sdf(myrt::sdf_info_t{.root = unite.get_pointer()});
-    abstract_art_sdf.set(capsule.get_parameter(capsule.material), 1);
-    abstract_art_sdf.set(sphere.get_parameter(sphere.material), 2);
+  //  abstract_art_sdf.name = "Abstract Art";
+  //  abstract_art_sdf.sdf = scene.push_sdf(myrt::sdf_info_t{.root = unite.get_pointer()});
+  //  abstract_art_sdf.set(capsule.get_parameter(capsule.material), 1);
+  //  abstract_art_sdf.set(sphere.get_parameter(sphere.material), 2);
 
-    object_component instance{.object = std::move(abstract_art_sdf)};
-    entities.push_back(ecs.create_entity(instance, transform_component{.scale = {1}}, object_ui_component{}));
-  }
+  //  object_component instance{.object = std::move(abstract_art_sdf)};
+  //  entities.push_back(ecs.create_entity(instance, transform_component{.scale = {1}}, object_ui_component{}));
+  //}
 
   bool cubemap_enabled = false;
   bool bokeh_enabled = false;
@@ -694,13 +707,70 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
   myrt::bloom bloom;
   myrt::linear_scale down_scale;
 
+  std::atomic_bool enable_physics = true;
+
+  std::jthread ps(
+      [&](auto const& tok) {
+        using dsec = std::chrono::duration<double>;
+
+        auto now = std::chrono::high_resolution_clock::now();
+        while (!tok.stop_requested()) {
+          if (!enable_physics) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            now = std::chrono::high_resolution_clock::now();
+            continue;
+          }
+          auto dt = std::chrono::duration_cast<dsec>(std::chrono::high_resolution_clock::now() - now);
+          now = std::chrono::high_resolution_clock::now();
+          ecs.update(dt, parsys);
+          std::this_thread::sleep_until(now + std::chrono::milliseconds(2));
+        }
+      },
+      stop_token);
+
+  cl::Platform default_platform = cl::Platform::getDefault();
+  std::cout << "Using platform: " << default_platform.getInfo<CL_PLATFORM_NAME>() << "\n";
+
+  cl_context_properties props[] = {CL_GL_CONTEXT_KHR, (cl_context_properties)myrt::current_context(), CL_WGL_HDC_KHR,
+      (cl_context_properties)myrt::current_window_handle(), CL_CONTEXT_PLATFORM,
+      (cl_context_properties)(default_platform)(), 0};
+
+  cl::Context context(CL_DEVICE_TYPE_GPU, props);
+  auto devs = context.getInfo<CL_CONTEXT_DEVICES>();
+  auto compute_device = devs[0];
+  std::cout << "Using device: " << devs[0].getInfo<CL_DEVICE_NAME>() << "\n";
+
+  std::stringstream pp_tonemap_filmic;
+  {
+    std::ifstream t(res_dir / "../src/pt/pp_tonemap_filmic.cl");
+    pp_tonemap_filmic << t.rdbuf();
+  }
+
+  cl::Program program(context, cl::Program::Sources{pp_tonemap_filmic.str()});
+  if (program.build({compute_device}) != CL_SUCCESS) {
+    std::cout << " Error building: " << program.getBuildInfo<CL_PROGRAM_BUILD_LOG>(compute_device) << "\n";
+  }
+
+  cl::CommandQueue cq(context, compute_device);
+  cl::Kernel tonemap_filmic(program, "tonemap_filmic");
+
+  auto const set_args = [](cl::Kernel& k, auto&&... args) {
+    int arg = 0;
+    (k.setArg(arg++, args), ...);
+  };
+
+  auto const call_kernel = [](cl::Kernel& k, cl::EnqueueArgs const& enq, auto&&... args) {
+    cl::KernelFunctor<decltype(args)...> functor(k);
+    functor(enq, std::forward<decltype(args)>(args)...);
+  };
+
   for (auto frame : myrt::gl::next_frame(*window)) {
     if (stop_token.stop_requested())
       break;
     global_texture_provider.new_frame();
     rnu::vec2i size(window->getSize().x, window->getSize().y);
 
-    static float super_sampling = 1.25;
+    static float super_sampling = 1.00;
 
     {
       render_entity->get<camera_component>()->width = super_sampling * size.x;
@@ -742,21 +812,22 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
           .direction = rnu::normalize<rnu::vec3>(rnu::vec3(vd)),
           .length = std::numeric_limits<float>::max()};
       auto picked = scene.pick(ray);
-     /* if (picked) {
-        scene.set_parameter(scene.materials()[picked->drawable->material_index], "metallic", 1.0f);
-        scene.set_parameter(scene.materials()[picked->drawable->material_index], "roughness", 0.22f);
+      if (picked) {
+        scene.set_parameter(scene.get_material_buffer().at(picked->drawable->material_index), "metallic", 1.0f);
+        scene.set_parameter(scene.get_material_buffer().at(picked->drawable->material_index), "roughness", 0.22f);
+        scene.set_parameter(scene.get_material_buffer().at(picked->drawable->material_index), "albedo",
+            rnu::vec4ui8(255 * rnu::vec4(0.8f, 0.8f, 0.8f, 1)));
         scene.set_parameter(
-            scene.materials()[picked->drawable->material_index], "albedo", rnu::vec4(1.f, 0.4f, 0.1f, 1));
-        scene.set_parameter(scene.materials()[picked->drawable->material_index], "albedo_texture", rnu::vec2ui(0));
-        printf("Picked object: #%zd at distance %.5f\n", picked->index, picked->t);
-      }*/
+            scene.get_material_buffer().at(picked->drawable->material_index), "albedo_texture", rnu::vec2ui(0));
+        pathtracer_renderer.set_focus(picked->t);
+      }
     }
 
-    static float scaling1 = 2.f;
+    static float scaling1 = 4.f;
     static float scaling2 = 8.f;
-    static float fac1 = 0.3f;
+    static float fac1 = 0.15f;
     static float fac2 = 0.15f;
-    static float step = 1.25f;
+    static float step = 0.9f;
 
     if (ImGui::Begin("PP")) {
       ImGui::DragFloat("S1", &scaling1, 0.01f, 0.5f, 100.f);
@@ -764,7 +835,6 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
       ImGui::DragFloat("F1", &fac1, 0.01f, 0.f, 1.f);
       ImGui::DragFloat("F2", &fac2, 0.01f, 0.f, 1.f);
       ImGui::DragFloat("Step", &step, 0.01f, 0.1f, 100.f);
-
       ImGui::End();
     }
 
@@ -777,7 +847,30 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
     down_scale.factor = 1.f / super_sampling;
     result = down_scale.process(global_texture_provider, result->id());
     result = bloom.process(global_texture_provider, result->id());
-    result = tonemap.process(global_texture_provider, result->id());
+
+    {
+      int ww = size.x;
+      int wh = size.y;
+
+      cl::ImageGL inputTexture(context, CL_MEM_READ_ONLY, GL_TEXTURE_2D, 0, result->id());
+      auto inverted = global_texture_provider.get(GL_TEXTURE_2D, GL_RGBA16F, ww, wh, 1);
+      cl::ImageGL outputTexture(context, CL_MEM_WRITE_ONLY, GL_TEXTURE_2D, 0, inverted->id());
+
+      std::vector<cl::Memory> textures{inputTexture, outputTexture};
+      std::vector<cl::Event> events(1);
+      cq.enqueueAcquireGLObjects(&textures);
+
+      int group_size = 8;
+      cl::NDRange globalWork(group_size * ((ww + 1) / group_size), group_size * ((wh + 1) / group_size));
+      cl::NDRange groupSize(group_size, group_size);
+      set_args(tonemap_filmic, inputTexture, outputTexture, size.x, size.y);
+      cq.enqueueNDRangeKernel(tonemap_filmic, cl::NullRange, globalWork, groupSize);
+
+      cq.enqueueReleaseGLObjects(&textures);
+      result = inverted;
+    }
+
+    // result = tonemap.process(global_texture_provider, result->id());
     result = fxaa.process(global_texture_provider, result->id());
     glNamedFramebufferTexture(fbo, GL_COLOR_ATTACHMENT0, result->id(), 0);
     glBlitNamedFramebuffer(fbo, 0, 0, 0, size.x, size.y, 0, 0, size.x, size.y, GL_COLOR_BUFFER_BIT, GL_NEAREST);
@@ -793,6 +886,10 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
       }
       ImGui::Checkbox("CUBEMPAP", &cubemap_enabled);
 
+      bool phys = enable_physics;
+      if (ImGui::Checkbox("Physics", &phys))
+        enable_physics = phys;
+
       if (cubemap_enabled)
         cube_resource.current([&](auto const& cur) { pathtracer_renderer.set_cubemap(cur.first, cur.second); });
       else
@@ -802,54 +899,8 @@ void render_function(std::stop_token stop_token, sf::RenderWindow* window) {
   }
 }
 
-enum class residence { none, resident };
-
-template <residence Residence> auto ldr_texture(std::filesystem::path const& path, GLenum format = GL_RGB565) {
-  std::uint32_t texture{};
-  glCreateTextures(GL_TEXTURE_2D, 1, &texture);
-  glTextureParameterf(texture, GL_TEXTURE_MAX_ANISOTROPY, 16.f);
-  glTextureParameteri(texture, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-  glTextureParameteri(texture, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glTextureParameteri(texture, GL_TEXTURE_WRAP_R, GL_REPEAT);
-  glTextureParameteri(texture, GL_TEXTURE_WRAP_S, GL_REPEAT);
-  glTextureParameteri(texture, GL_TEXTURE_WRAP_T, GL_REPEAT);
-
-  stbi::ldr_image image(path, 3);
-  glTextureStorage2D(texture, 8, GL_RGB8, image.width, image.height);
-  glTextureSubImage2D(texture, 0, 0, 0, image.width, image.height, GL_RGB, GL_UNSIGNED_BYTE, image.data.get());
-  glGenerateTextureMipmap(texture);
-
-  if constexpr (Residence == residence::none) {
-    return texture;
-  } else {
-    auto handle = glGetTextureHandleARB(texture);
-    glMakeTextureHandleResidentARB(handle);
-    return std::make_pair(texture, handle);
-  }
-}
-
 std::vector<myrt::geometric_object> load_object_file(
     myrt::scene& scene, std::filesystem::path const& path, float import_scale) {
-  /*std::map<std::string, std::shared_ptr<myrt::parameter_type>> pars;
-  nlohmann::json j = nlohmann::json::parse(R"(
-{
-  "parameters": {
-    "albedo": "vec4",
-    "ior": "float",
-    "roughness": "float",
-    "metallic": "float",
-    "transmission": "float",
-    "albedo_texture": "uvec2"
-  },
-  "source": "${sourceDir}/file.glsl"
-}
-)");
-  for (auto const& [key, value] : j["parameters"].get<nlohmann::json::object_t>()) {
-    pars[key] = myrt::type_registry[value];
-  }
-
-  myrt::basic_material_type pbr_material_type(pars, pbr_material_glsl);*/
-
   std::vector<myrt::geometric_object> objects;
   const auto load_obj = [&](auto path) {
     objects.clear();
@@ -869,17 +920,17 @@ std::vector<myrt::geometric_object> load_object_file(
         auto mat = m.material;
 
         auto pbrmat0 = scene.push_material(pbr_material_type);
-        scene.set_parameter(pbrmat0, "albedo", rnu::vec4ui8(255*rnu::vec4(mat->diffuse[0], mat->diffuse[1], mat->diffuse[2], 1)));
+        scene.set_parameter(
+            pbrmat0, "albedo", rnu::vec4ui8(255 * rnu::vec4(mat->diffuse[0], mat->diffuse[1], mat->diffuse[2], 1)));
         scene.set_parameter(pbrmat0, "ior", mat->ior);
-        scene.set_parameter(pbrmat0, "roughness", std::max(0.054f, std::powf(1.f / mat->specularity, 1 / 3.1415926535897f)));
+        scene.set_parameter(
+            pbrmat0, "roughness", std::max(0.054f, std::powf(1.f / mat->specularity, 1 / 3.1415926535897f)));
         scene.set_parameter(pbrmat0, "transmission", 1.0f - mat->dissolve);
         scene.set_parameter(pbrmat0, "albedo_texture", rnu::vec2ui(0));
 
         if (!mat->map_diffuse.empty()) {
           auto [texture, handle] = ldr_texture<residence::resident>(par / mat->map_diffuse);
-
-          auto ui = rnu::vec2ui((handle)&0xffffffff, (handle >> 32) & 0xffffffff);
-          scene.set_parameter(pbrmat0, "albedo_texture", ui);
+          scene.set_parameter(pbrmat0, "albedo_texture", handle);
         }
 
         auto& obj = objects.emplace_back();

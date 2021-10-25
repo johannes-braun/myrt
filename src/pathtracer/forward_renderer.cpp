@@ -39,7 +39,7 @@ std::shared_ptr<texture_t> forward_renderer::run(texture_provider_t& provider, s
   if (!m_depth_texture)
     m_depth_texture = provider.get(GL_TEXTURE_2D, GL_DEPTH24_STENCIL8, width, height, 1);
   if (!m_shadow_map)
-    m_shadow_map = provider.get(GL_TEXTURE_2D, GL_RGBA16F, 2048, 2048, 1);
+    m_shadow_map = provider.get(GL_TEXTURE_2D, GL_RGBA32F, 2048, 2048, 1);
   if (!m_shadow_pass_depth)
     m_shadow_pass_depth = provider.get(GL_TEXTURE_2D, GL_DEPTH24_STENCIL8, 2048, 2048, 1);
 

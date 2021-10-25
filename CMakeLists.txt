@@ -8,6 +8,26 @@ IF(MSVC)
     SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /EHsc")
 ENDIF(MSVC)
 
+# GLShader
+set(EXT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ext)
+
+function(add_external path repo)
+    if(NOT EXISTS ${path})
+        execute_process(COMMAND ${GIT_EXECUTABLE} clone ${repo} ${path})
+    endif()
+    add_subdirectory(${path})
+endfunction()
+add_external(${EXT_DIR}/glsp "https://github.com/johannes-braun/GLshader.git")
+add_external(${EXT_DIR}/rnu "https://github.com/johannes-braun/rnu.git")
+
+find_package(Git REQUIRED)
+find_package(SFML 2 COMPONENTS graphics audio main network system window REQUIRED)
+find_package(OpenCL REQUIRED)
+find_package(Stb REQUIRED)
+find_package(imgui CONFIG REQUIRED)
+find_package(ImGui-SFML CONFIG REQUIRED)
+find_package(nlohmann_json REQUIRED)
+
 add_subdirectory(src)
 
 add_executable(myrt 
@@ -63,31 +83,17 @@ add_executable(myrt
     "src/pathtracer/forward_renderer.hpp"
     "src/pathtracer/forward_renderer.cpp" "src/pathtracer/sdf.cpp"  
 "src/ecs/ecs.cpp"
-"src/ecs/system.cpp" )
+"src/ecs/system.cpp"  "src/material.hpp" "src/types.hpp" "src/pathtracer/texture_array.hpp" "src/pathtracer/texture_array.cpp" "src/cl.hpp" "src/gl_current.hpp" "src/gl_current.cpp")
 target_compile_features(myrt PUBLIC cxx_std_23)
 target_link_libraries(myrt PUBLIC myrt.sfml myrt.xgl)
+target_link_libraries(myrt PRIVATE OpenCL::OpenCL)
 
-find_package(SFML 2 COMPONENTS graphics audio main network system window REQUIRED)
+
 target_link_libraries(myrt PUBLIC Freetype OpenAL OpenGL Vorbis sfml-audio sfml-graphics sfml-main sfml-network sfml-system sfml-window)
-find_package(Stb REQUIRED)
+
 target_include_directories(myrt PUBLIC ${Stb_INCLUDE_DIR})
-find_package(imgui CONFIG REQUIRED)
-find_package(ImGui-SFML CONFIG REQUIRED)
-find_package(nlohmann_json REQUIRED)
 target_link_libraries(myrt PRIVATE ImGui-SFML::ImGui-SFML nlohmann_json nlohmann_json::nlohmann_json)
 
-# GLShader
-find_package(Git REQUIRED)
-set(EXT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ext)
-
-function(add_external path repo)
-    if(NOT EXISTS ${path})
-        execute_process(COMMAND ${GIT_EXECUTABLE} clone ${repo} ${path})
-    endif()
-    add_subdirectory(${path})
-endfunction()
-add_external(${EXT_DIR}/glsp "https://github.com/johannes-braun/GLshader.git")
-add_external(${EXT_DIR}/rnu "https://github.com/johannes-braun/rnu.git")
 
 target_link_libraries(myrt PRIVATE glsp::glsp)
 target_link_libraries(myrt PRIVATE rnu::rnu)

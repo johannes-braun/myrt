@@ -18,7 +18,7 @@ vec3 material_normal(vec3 n) {
 void open()
 {
   material_state.albedo_texture = this.albedo_texture;
-  material_state.mat.albedo_rgba_unorm = color_make(this.albedo.value);
+  material_state.mat.color = this.albedo.value;
   material_state.mat.ior = this.ior;
   material_state.mat.roughness = this.roughness;
   material_state.mat.metallic = this.metallic;
@@ -28,8 +28,7 @@ void open()
 void evaluate(vec3 point, vec2 uv, vec3 normal, vec3 towards_light, vec3 towards_viewer, out vec3 reflectance, out float pdf) {
   sampler2D albedo_texture = sampler2D(material_state.albedo_texture);
   if (material_state.albedo_texture != uvec2(0))
-    material_state.mat.albedo_rgba_unorm =
-        color_make(pow(textureLod(albedo_texture, vec2(uv.x, 1 - uv.y), 0), vec4(2.2)));
+    material_state.mat.color = pow(texture(albedo_texture, vec2(uv.x, 1 - uv.y)), vec4(2.2));
   material_state.is_incoming = dot(normal, -towards_viewer) < 0;
   material_state.ior1 = material_state.is_incoming ? 1.0 : material_state.mat.ior;
   material_state.ior2 = material_state.is_incoming ? material_state.mat.ior : 1.0;

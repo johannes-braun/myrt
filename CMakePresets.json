@@ -29,6 +29,13 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }
+    },
+    {
+      "name": "win-x64-rwdi",
+      "inherits": "win-x64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
     }
   ],
   "buildPresets": [
@@ -36,6 +43,11 @@
       "name": "Debug",
       "configurePreset": "win-x64-debug",
       "configuration": "Debug"
+    },
+    {
+      "name": "RelWithDebInfo",
+      "configurePreset": "win-x64-rwdi",
+      "configuration": "RelWithDebInfo"
     },
     {
       "name": "Release",

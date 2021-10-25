@@ -6,7 +6,7 @@
 #define material_info_t pbr_matinfo_t
 struct material_info_t
 {
-  color_rgba_t albedo_rgba_unorm;
+  vec4 color;
   float ior;
   float roughness;
   float metallic;
@@ -106,9 +106,11 @@ void pbr_ggx_eval(material_info_t material, vec3 towards_view, vec3 towards_ligh
 
   float cos_theta = (dot(microfacet_normal, normal));
 
-  vec3 col = mix(vec3(1), color_get(material.albedo_rgba_unorm).rgb, sqrt(material.metallic));
 
-  result.pdf = F * D * G * cos_theta / den;// D* (cos_theta)*jacobian;
+  vec3 col = mix(vec3(1), material.color.rgb, sqrt(material.metallic));
+  float mden = G / den;
+  mden = isnan(mden) ? 1 : mden;
+  result.pdf = F * D * cos_theta * mden;// D* (cos_theta)*jacobian; 
   result.reflectance = col * result.pdf;// abs(dot(towards_light, normal));// *D* G / den;
 }
 //
@@ -150,7 +152,7 @@ void ggx_pbr_transmit_eval(material_info_t material, vec3 towards_view, vec3 tow
 
   float cos_theta = (dot(microfacet_normal, normal));
   result.pdf = cos_theta * ft;
-  result.reflectance = color_get(material.albedo_rgba_unorm).rgb * result.pdf;
+  result.reflectance = material.color.rgb * result.pdf;
 }
 
 float resample_factor = 1.0;
@@ -195,17 +197,11 @@ vec3 pbr_resample(vec2 random_sample, material_info_t material, vec3 towards_vie
     hemisphere_sample = sample_hemisphere(importance_sample);
     microfacet_normal = transform_local_to_world(hemisphere_sample, normal);
     return nreflect(towards_view, normal, microfacet_normal);
-    //return pbr_ggx_resample(random_sample, material, towards_view, normal, ior_front, ior_back);
   }
 }
 
 void pbr_eval(material_info_t material, vec3 towards_view, vec3 towards_light, vec3 normal, float ior_front, float ior_back, inout brdf_result_t result)
 {
-  //vec3 microfacet_normalr = normalize((towards_light + towards_view));
-  //vec3 microfacet_normalt = normalize(-(ior_front * towards_view + ior_back * towards_light));
-  //if (dot(towards_light, normal) < 0)
-  //  microfacet_normalr = microfacet_normalt;
-
   brdf_result_t transmit;
   ggx_pbr_transmit_eval(material, towards_view, towards_light, normal, ior_front, ior_back, transmit);
 
@@ -216,20 +212,6 @@ void pbr_eval(material_info_t material, vec3 towards_view, vec3 towards_light, v
   material.roughness = 1.0;
   material.metallic = 1.0;
   pbr_ggx_eval(material, towards_view, towards_light, normal, ior_front, ior_back, diffuse);
-
-  //float fresnel_cos_theta = dot(towards_view, microfacet_normalr);
-  //float F = fresnel(fresnel_cos_theta, ior_front, ior_back, material.metallic);
-  //float T = (1 - F) * material.transmission;
-  //float D = (1 - F) * (1-material.transmission);
-
-  //float K = F;
-  //result = gloss;
-  //if (D > K)
-  //  result = diffuse;
-  //if (T > K)
-  //  result = transmit;
-
-  //bool brr = false;
 
   switch (pbr_state)
   {
@@ -244,15 +226,6 @@ void pbr_eval(material_info_t material, vec3 towards_view, vec3 towards_light, v
     break;
   }
   after_sample = false;
-  /*if (isnan(transmit.pdf))
-    transmit.pdf = 0;
-  if (isnan(diffuse.pdf))
-    diffuse.pdf = 0;
-  if (isnan(gloss.pdf))
-    gloss.pdf = 0;*/
-
-  /*float den = (transmit.pdf + diffuse.pdf + gloss.pdf);
-  g_sample_weight = clamp(result.pdf / den, 0, 5);*/
 
   result.pdf *= resample_factor;
   result.reflectance *= resample_factor;

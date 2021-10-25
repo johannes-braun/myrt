@@ -25,9 +25,9 @@ std::shared_ptr<texture_t> basic_post_process::process(texture_provider_t& provi
   auto const count_x = (width + m_group_sizes.x - 1) / m_group_sizes.x;
   auto const count_y = (height + m_group_sizes.y - 1) / m_group_sizes.y;
   glDispatchCompute(count_x, count_y, 1);
-  glMemoryBarrierByRegion(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-  glMemoryBarrierByRegion(GL_TEXTURE_FETCH_BARRIER_BIT);
-  glMemoryBarrier(GL_COMMAND_BARRIER_BIT);
+  //glMemoryBarrierByRegion(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+  //glMemoryBarrierByRegion(GL_TEXTURE_FETCH_BARRIER_BIT);
+  //glMemoryBarrier(GL_COMMAND_BARRIER_BIT);
 
   return dst;
 }

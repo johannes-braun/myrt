@@ -1,0 +1,17 @@
+add_executable(vk "vk.cpp" "shader_build.hpp" "shader_build.cpp" "../obj.hpp" "../obj.cpp")
+target_compile_features(vk PUBLIC cxx_std_23)
+set(VULKAN_DIR $ENV{VULKAN_SDK})
+message(${VULKAN_DIR})
+find_library(VULKAN_LIB NAMES vulkan-1 PATHS ${VULKAN_DIR}/Lib)
+find_library(SHADERC_COMBINED_LIB NAMES shaderc_combined PATHS ${VULKAN_DIR}/Lib)
+find_library(SHADERC_LIB NAMES shadercd PATHS ${VULKAN_DIR}/Lib)
+
+find_package(glfw3 REQUIRED)
+
+find_package(unofficial-vulkan-memory-allocator CONFIG REQUIRED)
+set(VULKAN_INC ${VULKAN_DIR}/Include)
+target_include_directories(vk PRIVATE ${VULKAN_INC})
+target_link_libraries(vk PUBLIC glfw)
+target_include_directories(vk PUBLIC ${Stb_INCLUDE_DIR})
+target_link_libraries(vk PRIVATE nlohmann_json nlohmann_json::nlohmann_json rnu::rnu)
+target_link_libraries(vk PRIVATE unofficial::vulkan-memory-allocator::vulkan-memory-allocator ${VULKAN_LIB} ${SHADERC_COMBINED_LIB} ${SHADERC_LIB})

@@ -253,6 +253,13 @@ void scene::enqueue(
 }
 
 void scene::enqueue(geometry_t const* geometry, material_t const* material, rnu::mat4 const& transformation) {
+  aabb_t transformed;
+  for (unsigned i = 0; i < 8; ++i) {
+    rnu::vec3 const point(geometry->aabb[i & 0b001].x, geometry->aabb[i & 0b010].y, geometry->aabb[i & 0b100].z);
+    rnu::vec4 const transformed_point = transformation * rnu::vec4(point.x, point.y, point.z, 1.0f);
+    transformed.enclose(rnu::vec3(transformed_point));
+  }
+
   m_drawables.push_back(drawable_geometry_t{.transformation = transformation,
       .inverse_transformation = inverse(transformation),
       .geometry_info = geometry->info,
@@ -260,13 +267,6 @@ void scene::enqueue(geometry_t const* geometry, material_t const* material, rnu:
       .geometry_index = geometry->index});
 
   m_current_drawable_hash ^= hash(geometry, material, transformation);
-
-  aabb_t transformed;
-  for (unsigned i = 0; i < 8; ++i) {
-    rnu::vec3 const point(geometry->aabb[i & 0b001].x, geometry->aabb[i & 0b010].y, geometry->aabb[i & 0b100].z);
-    rnu::vec4 const transformed_point = transformation * rnu::vec4(point.x, point.y, point.z, 1.0f);
-    transformed.enclose(rnu::vec3(transformed_point));
-  }
   m_drawable_aabbs.push_back(transformed);
 }
 
@@ -329,6 +329,7 @@ std::experimental::generator<size_t> scene::get_overlapping(myrt::aabb_t const& 
 
 scene::prepare_result_t scene::prepare() {
   prepare_result_t result;
+
   const auto fill_buffer = [this](auto buffer, auto const& vector) {
     glNamedBufferData(buffer, detail::vector_bytes(vector), vector.data(), GL_DYNAMIC_DRAW);
   };

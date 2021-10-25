@@ -27,20 +27,6 @@ struct sdf_info_t {
   std::shared_ptr<sdf::instruction> root;
 };
 
-/* struct material_info_t
- {
-   rnu::vec4ui8 albedo_rgba = rnu::vec4ui8(255, 255, 255, 255);
-   rnu::vec4ui8 alt_color_rgba = rnu::vec4ui8(255, 255, 255, 255);
-   float ior = 1.0f;
-   float roughness = 1.0f;
-   float metallic = 0.0f;
-   float transmission = 0.0f;
-   float emission = 0.0f;
-   int has_albedo_texture = false;
-   std::uint64_t albedo_texture = 0;
-   int bbb[2];
- };*/
-
 struct geometry_t;
 using material_t = material_buffer::material_t;
 struct sdf_t;
@@ -139,7 +125,6 @@ public:
     return m_type_registry.create<T>();
   }
 
-
   [[nodiscard]] geometry_pointer push_geometry(std::span<index_type const> indices, std::span<point_type const> points,
       std::span<point_type const> normals, std::span<uv_type const> uvs);
   
@@ -162,25 +147,14 @@ public:
   void enqueue(sdf_t const* geometry, rnu::mat4 const& transformation);
   void enqueue(const sdf_pointer& geometry, rnu::mat4 const& transformation);
 
-  //[[nodiscard]] std::shared_ptr<material_type> type_of(material_pointer const& material) const;
-
-  // void set_material_parameter(const sdf_pointer& sdf, std::shared_ptr<int_param> const& parameter, material_pointer
-  // material);
-
   template <typename T>
   void set_parameter(const sdf_pointer& sdf, std::shared_ptr<parameter> const& parameter, T&& value);
   template <typename T> void set_parameter(const sdf_t* sdf, std::shared_ptr<parameter> const& parameter, T&& value);
 
   void set_parameter(const sdf_pointer& sdf, std::shared_ptr<parameter> const& parameter, float* value_ptr);
 
-  //template <typename T>
-  //void set_parameter(const material_pointer& material, std::shared_ptr<parameter> const& parameter_name, T&& value);
-
   template <typename T> void set_parameter(const material_pointer& material, std::string const& name, T&& value);
 
- /* template <typename T>
-  T get_parameter_value(const material_pointer& material, std::shared_ptr<parameter> const& param);
-  template <typename T> T get_parameter_value(const material_pointer& material, std::string const& name);*/
   std::shared_ptr<parameter> get_parameter(const material_pointer& material, std::string const& name) const;
 
   struct hit {
@@ -194,9 +168,6 @@ public:
 
   const material_pointer& default_material() const;
 
-  /*[[nodiscard]] std::vector<material_pointer> const& materials() const noexcept {
-    return m_available_materials;
-  }*/
   [[nodiscard]] std::vector<sdf_pointer> const& sdfs() const noexcept {
     return m_available_sdfs;
   }
@@ -204,9 +175,6 @@ public:
   sdf::glsl_assembler const& get_sdf_assembler() {
     return m_sdf_assembler;
   }
-  //material_glsl_assembler const& get_material_assembler() {
-  //  return m_material_assembler;
-  //}
   material_buffer const& get_material_buffer() {
     return m_material_buffer;
   }
@@ -224,14 +192,12 @@ public:
 private:
   sdf::glsl_assembly& get_sdf_assembly(sdf_t* sdf);
   sdf::glsl_assembly const& get_sdf_assembly(const sdf_t* sdf);
-  //parameter_buffer_description& get_material_assembly(material_pointer const& mat);
-  //parameter_buffer_description const& get_material_assembly(material_pointer const& mat) const;
 
   void erase_geometry_direct(const geometry_pointer& geometry);
   void erase_geometry_indirect(const geometry_pointer& geometry);
 
   scene_buffers m_scene_buffers;
-
+  std::atomic_bool m_lock_prepare = false;
   size_t m_last_drawable_hash = 0;
   size_t m_current_drawable_hash = ~0;
   size_t m_last_sdf_drawable_hash = ~0;
@@ -243,11 +209,9 @@ private:
   std::vector<aabb_t> m_last_drawable_aabbs;
 
   std::vector<geometry_pointer> m_available_geometries;
-  //std::vector<material_pointer> m_available_materials;
   std::vector<sdf_pointer> m_available_sdfs;
   std::vector<std::unique_ptr<bvh>> m_object_bvhs;
   std::vector<geometry_pointer> m_erase_on_prepare;
-  // std::vector<material_pointer> m_erase_on_prepare_materials;
 
   std::vector<index_type> m_indices;
   std::vector<aligned_point_t> m_vertices;
@@ -256,15 +220,12 @@ private:
   std::vector<aligned_node_t> m_bvh_nodes;
   std::vector<index_type> m_bvh_indices;
   std::vector<float> m_sdf_parameter_buffer;
-  //std::vector<float> m_material_parameter_buffer;
   std::vector<material_reference_t> m_material_references;
   std::vector<drawable_sdf_t> m_sdf_drawables;
 
-  //material_glsl_assembler m_material_assembler;
   myrt::types_registry m_type_registry;
   material_registry m_material_types;
   material_buffer m_material_buffer;
-  // material_registry m_material_registry;
   sdf::glsl_assembler m_sdf_assembler;
   std::unique_ptr<bvh> m_global_bvh;
   material_pointer m_default_material;
@@ -285,26 +246,10 @@ inline void scene::set_parameter(const sdf_t* sdf, std::shared_ptr<parameter> co
   get_sdf_assembly(sdf).buffer_description.set_value(m_sdf_parameter_buffer.data(), parameter, std::forward<T>(value));
 }
 
-//template <typename T>
-//void scene::set_parameter(const material_pointer& material, std::shared_ptr<parameter> const& parameter, T&& value) {
-//  get_material_assembly(material).set_value(m_material_parameter_buffer.data(), parameter, std::forward<T>(value));
-//}
-
 template <typename T> void scene::set_parameter(const material_pointer& material, std::string const& name, T&& value) {
-  //set_parameter(material, get_parameter(material, name), std::forward<T>(value));
   m_material_buffer.set(*material, name, std::forward<T>(value));
   m_materials_buffer_changed = true;
 }
-//
-//template <typename T>
-//inline T scene::get_parameter_value(const material_pointer& material, std::shared_ptr<parameter> const& param) {
-//  return get_material_assembly(material).get_value<T>(m_material_parameter_buffer.data(), param);
-//}
-
-//template <typename T> inline T scene::get_parameter_value(const material_pointer& material, std::string const& name) {
-//  return get_parameter_value<T>(material, get_parameter(material, name));
-//}
-
 template <typename T> void sdf_object::set(std::shared_ptr<parameter> const& parameter, T&& value) {
   get_scene()->set_parameter(sdf, parameter, std::forward<T>(value));
 }

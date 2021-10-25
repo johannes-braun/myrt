@@ -67,7 +67,7 @@ void main()
   vec4 gbuf_norm_mat = texelFetch(gbuffer, ivec3(pixel, 2), 0);
   vec2 gbuffersize = textureSize(gbuffer, 0).xy;
 
-  bool is_bg = gbuf_norm_mat == vec4(0,0,0,0);
+  bool is_bg = gbuf_norm_mat.xyz == vec3(0,0,0);
 
   if(is_bg)
   {
@@ -95,35 +95,29 @@ void main()
 
   random_init_nt(pixel, int(random_seed + 9897584*uint(position.x) ^uint(position.y) ^uint(position.z)));
 
-  float maxdiff = 0.0;
-  float mindiff = 1.0 / 0.0;
   float avg_diff = 0;
-  int r = 1;
+  int r = 9;
 
-  for(int i=-r; i<=r; ++i)
+  for(int i=0; i<r; ++i)
   {
-    for(int j = -r; j <= r; ++j)
-    { 
-      vec2 hs = 2*random_next_2d() - 1;
+    vec2 hs =2*random_next_2d() - 1;
 
-      vec2 shuv = shadow_uv + 1.5*hs / shadow_map_size;
+    vec2 shuv = shadow_uv + 2.5*hs / shadow_map_size;
 
-      if(any(greaterThanEqual(shuv, vec2(1)))||any(lessThan(shuv, vec2(0))))
-      {
-        avg_diff+=1;
-        continue;
-      }
-
-      vec3 shadow_map_pos = texture(shadow_map, shadow_uv + 1.5*hs / shadow_map_size).xyz;
-      vec3 check_point = position - 1000 * light_dir;
-      float l1 = distance(check_point, shadow_map_pos);
-      
-      float diff = float(l1 - 1000 < 0.02);
-      avg_diff += diff;
+    if(any(greaterThanEqual(shuv, vec2(1)))||any(lessThan(shuv, vec2(0))))
+    {
+      avg_diff+=1;
+      continue;
     }
-  }  
-  float shadow = avg_diff / ((2 * r + 1) * (2 * r + 1));
 
+    vec3 shadow_map_pos = texture(shadow_map, shuv).xyz;
+    vec3 check_point = position - 100 * light_dir;
+    float l1 = distance(check_point, shadow_map_pos);
+      
+    float diff = float(l1 - 100 < 0.01);
+    avg_diff += diff;
+  }  
+  float shadow = avg_diff / r;
 
   open(int(materials[material].id), int(materials[material].offset));
   pbr_state = s_diffuse;
@@ -131,33 +125,51 @@ void main()
   float pdf = 1;
   evaluate(position, uv, normal, light_dir, to_cam, ref, pdf);
 
-
   vec3 refgb = vec3(0);
   float refpdf = 1;
   pbr_state = s_diffuse;
   evaluate(position, uv, normal, normal, to_cam, refgb, refpdf);
 
   float freeness = 0;
-  const float ssao_distance = 0.02;
-  const float ssao_fac = 0.3;
-  int samplesxy = 16;
+  float ssao_distance = 0.02;
 
-  for(int x = 0; x < samplesxy; ++x)
+  vec3 dfdx = dFdx(position);
+  vec3 dfdy = dFdy(position);
+  vec3 mdf = max(dfdx, dfdy);
+  float mdmdf = max(mdf.x, max(mdf.y, mdf.z));
+
+  ssao_distance = 0.1;
+
+  const float ssao_fac = 0.2;
+  int samplesxy = 1;
+  int samplesd = 8;
+
+  for(int i=0; i<samplesd; ++i)
+  {
+    for(int x = 0; x < samplesxy; ++x)
   {
     vec2 hs = 2*random_next_2d() - 1;
     vec3 hemi = sample_hemisphere(hs);
+
     vec3 world = normalize(transform_local_to_world(hemi, normal));
 
     vec3 test_point = position + world * ssao_distance;
 
     vec4 hom = proj * view * vec4(test_point, 1);
-    vec2 px = ((hom.xy / hom.z) + 1) / 2;
+
+    if(hom.w == 0)
+    {
+      freeness+=1;
+      continue;
+    }
+
+    vec2 px = ((hom.xy / hom.w) + 1) / 2;
     px *= gbuffersize;
     px = clamp(px, vec2(0), gbuffersize - 1);
 
     vec4 other_norm = texelFetch(gbuffer, ivec3(px, 2), 0);
 
-    if(other_norm == vec4(0))
+    if(other_norm.xyz == vec3(0))
     {
       freeness+=1;
       continue;
@@ -177,16 +189,20 @@ void main()
       continue;
     }
 
-    freeness += pow(max(smoothstep(diff, ssao_fac, -ssao_fac), smoothstep(diff, ssao_fac, -ssao_fac)), 15);
+    freeness += float(diff < -ssao_fac);
   }
-  freeness /= float(samplesxy);
+    ssao_distance /= 2;
+  }
+  freeness /= float(samplesxy) * samplesd;
 
-  vec4 color0 = vec4((refgb / refpdf + ref / pdf * shadow * max(0, dot(normal, light_dir))), 1);
-  vec4 color1 = freeness * color0;
-
-  color = color1;
-  if(any(isnan(color)))
+  if(refpdf == 0 || pdf == 0)
   {
-    color = vec4(vec3(refgb / refpdf), 0);
+    color = vec4(vec3(refgb), 0);
   }
+  
+  vec3 lcol = vec3(3);
+
+  color = vec4(freeness * (refgb / refpdf + lcol * ref / pdf * shadow * max(0.0, dot(normal, light_dir))), 1);
+
+  color *= vec4(0.7 + 0.4*vec3(random_next()), 0);
 }

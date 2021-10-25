@@ -108,6 +108,10 @@ public:
     return m_material_instances;
   }
 
+  std::shared_ptr<material_t> const& at(size_t index) const {
+    return m_material_instances[index];
+  }
+
 private:
   std::vector<float> m_buffer;
   std::vector<std::shared_ptr<material_t>> m_material_instances;
