@@ -27,7 +27,7 @@ void write_uv(vec2 uv)
 
 void main()
 {
-  write_position(in_normal);
+  write_position(in_position);
   write_normal(in_normal);
-  write_uv(vec2(1, 1));
+  write_uv(in_uv);
 }

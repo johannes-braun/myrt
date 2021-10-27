@@ -8,11 +8,15 @@
 #include <rnu/math/math.hpp>
 
 #include <vulkan/vulkan.hpp>
+
 #include <shaderc/shaderc.hpp>
 #include <string_view>
 #include <unordered_set>
 #include <iostream>
 #include "shader_build.hpp"
+
+#include <imgui_impl_glfw.h>
+#include <imgui_impl_vulkan.h>
 
 #define VMA_DYNAMIC_VULKAN_FUNCTIONS 0
 #define VMA_IMPLEMENTATION
@@ -22,23 +26,24 @@
 
 #include <GLFW/glfw3.h>
 
-template<typename Fun>
-struct call_at_scope_end {
-  call_at_scope_end(Fun&& f) : _f(std::forward<Fun>(f)){}
-  ~call_at_scope_end(){ _f(); }
-  
+template <typename Fun> struct call_at_scope_end {
+  call_at_scope_end(Fun&& f) : _f(std::forward<Fun>(f)) {}
+  ~call_at_scope_end() {
+    _f();
+  }
+
 private:
   Fun _f;
 };
 
-template<typename Fun>
-auto at_scope_end(Fun&& f) {
+template <typename Fun> auto at_scope_end(Fun&& f) {
   return call_at_scope_end<Fun>(std::forward<Fun>(f));
 }
 
 constexpr bool debug_layers = false;
-constexpr int initial_width = 1920;
-constexpr int initial_height = 1200;
+int initial_width = 1920;
+int initial_height = 1200;
+constexpr int image_count = 4;
 
 std::vector<char const*> filter_extensions(
     std::unordered_set<std::string_view>& desired, std::vector<vk::ExtensionProperties> const& properties) {
@@ -79,6 +84,8 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityF
   return VK_FALSE;
 }
 
+vk::DispatchLoaderStatic sdl;
+
 struct vk_image {
   vk_image() = default;
   vk_image(vk_image const&) = delete;
@@ -118,7 +125,7 @@ vk_image get_image(vk::Device device, VmaAllocator allocator, std::uint32_t w, s
   img1.sharingMode = vk::SharingMode::eExclusive;
   img1.tiling = vk::ImageTiling::eOptimal;
   img1.usage = usage;
-  auto img = device.createImageUnique(img1);
+  auto img = device.createImageUnique(img1, nullptr, sdl);
 
   VmaAllocationCreateInfo img1_alloc_info{};
   VmaAllocation img1_mem;
@@ -132,6 +139,74 @@ vk_image get_image(vk::Device device, VmaAllocator allocator, std::uint32_t w, s
   i.image = std::move(img);
   i.allocator = allocator;
   return i;
+}
+template <class T> inline void hash_combine(std::size_t& seed, const T& v) {
+  std::hash<T> hasher;
+  seed ^= hasher(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+}
+
+struct swapchain_data {
+  vk::SurfaceFormatKHR surface_format;
+  vk::UniqueSwapchainKHR swapchain;
+  std::vector<vk::Image> images;
+  std::vector<vk::UniqueImageView> views;
+
+  void reset() {
+    swapchain.reset();
+    images.clear();
+    views.clear();
+  }
+};
+
+swapchain_data create_swapchain(vk::Device device, vk::PhysicalDevice default_pd, vk::SurfaceKHR surface, uint32_t w,
+    uint32_t h, vk::ArrayProxy<uint32_t const> queue_families) {
+  swapchain_data result;
+#pragma region CreateSwapchain
+  auto const& surface_caps = default_pd.getSurfaceCapabilitiesKHR(surface);
+  auto const& formats = default_pd.getSurfaceFormatsKHR(surface);
+  auto const& presentModes = default_pd.getSurfacePresentModesKHR(surface);
+
+  result.surface_format = formats[1];
+  auto present_mode = vk::PresentModeKHR::eMailbox;
+  vk::SwapchainCreateInfoKHR swapchain_info;
+  swapchain_info.surface = surface;
+  swapchain_info.imageColorSpace = result.surface_format.colorSpace;
+  swapchain_info.imageArrayLayers = 1;
+  swapchain_info.imageExtent = vk::Extent2D(initial_width, initial_height);
+  swapchain_info.imageFormat = result.surface_format.format;
+  swapchain_info.imageSharingMode = vk::SharingMode::eExclusive;
+  swapchain_info.clipped = true;
+  swapchain_info.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
+  swapchain_info.imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst;
+  swapchain_info.minImageCount =
+      std::clamp<std::uint32_t>(image_count, surface_caps.minImageCount, surface_caps.maxImageCount);
+
+  std::unordered_set<uint32_t> families(std::begin(queue_families), std::end(queue_families));
+  std::vector<uint32_t> final_families(begin(families), end(families));
+  if (final_families.size() > 1) {
+    swapchain_info.imageSharingMode = vk::SharingMode::eConcurrent;
+  }
+  swapchain_info.setQueueFamilyIndices(final_families);
+  swapchain_info.presentMode = present_mode;
+  swapchain_info.preTransform = surface_caps.currentTransform;
+  result.swapchain = device.createSwapchainKHRUnique(swapchain_info, nullptr, sdl);
+  result.images = device.getSwapchainImagesKHR(result.swapchain.get());
+
+  for (auto const& image : result.images) {
+    vk::ImageViewCreateInfo info;
+    info.image = image;
+    info.components = vk::ComponentMapping();
+    info.format = result.surface_format.format;
+    info.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    info.subresourceRange.baseArrayLayer = 0;
+    info.subresourceRange.layerCount = 1;
+    info.subresourceRange.baseMipLevel = 0;
+    info.subresourceRange.levelCount = 1;
+    info.viewType = vk::ImageViewType::e2D;
+    result.views.push_back(device.createImageViewUnique(info, nullptr, sdl));
+  }
+#pragma endregion
+  return result;
 }
 
 int main() {
@@ -188,6 +263,11 @@ int main() {
     auto err = glfwCreateWindowSurface(vk_instance.get(), window.get(), nullptr, &surface_impl);
     surface = vk::UniqueSurfaceKHR(surface_impl, {});
   }
+  auto imgui_c = ImGui::CreateContext();
+  ImGui::SetCurrentContext(imgui_c);
+
+  ImGui_ImplGlfw_InitForVulkan(window.get(), true);
+  ImGui::GetIO().DisplaySize = ImVec2(initial_width, initial_height);
 #pragma endregion
 
   auto physical_devices = vk_instance->enumeratePhysicalDevices();
@@ -265,6 +345,7 @@ int main() {
   sync2.synchronization2 = true;
 
   vk::DeviceCreateInfo device_info;
+  device_info.pEnabledFeatures = &features.features;
   device_info.ppEnabledExtensionNames = found_device_extensions.data();
   device_info.enabledExtensionCount = found_device_extensions.size();
   device_info.ppEnabledLayerNames = found_device_layers.data();
@@ -275,6 +356,58 @@ int main() {
 
   auto device = default_pd.createDeviceUnique(device_info);
   vk::DispatchLoaderDynamic ext(vk_instance.get(), vkGetInstanceProcAddr, device.get(), vkGetDeviceProcAddr);
+
+  struct framebuffer_getter {
+    void new_frame() {
+      for (auto it = begin(framebuffers); it != end(framebuffers);) {
+        if (it->second.used_in_frame <= 0) {
+          std::cout << "Erasing unused Framebuffer...\n";
+          it = framebuffers.erase(it);
+        } else {
+          it->second.used_in_frame--;
+          ++it;
+        }
+      }
+    }
+
+    framebuffer_getter(vk::Device device) : m_device(device) {}
+
+    vk::Framebuffer operator()(
+        uint32_t w, uint32_t h, vk::RenderPass pass, vk::ArrayProxyNoTemporaries<vk::ImageView const> images) {
+      size_t hash = 0;
+      hash_combine(hash, w);
+      hash_combine(hash, h);
+      hash_combine<VkRenderPass>(hash, pass);
+
+      for (auto const& iv : images) hash_combine<VkImageView>(hash, iv);
+
+      auto& ufb = framebuffers[hash];
+      if (!ufb.framebuffer) {
+        std::cout << "Framebuffer not found. Creating new one:\n"
+                  << "  w=" << w << "\n"
+                  << "  h=" << h << "\n"
+                  << "  with " << images.size() << " attachments\n";
+
+        vk::FramebufferCreateInfo fbo_info;
+        fbo_info.width = w;
+        fbo_info.height = h;
+        fbo_info.layers = 1;
+        fbo_info.renderPass = pass;
+        fbo_info.setAttachments(images);
+        ufb.framebuffer = m_device.createFramebufferUnique(fbo_info, nullptr, sdl);
+      }
+      ufb.used_in_frame = 50;
+      return ufb.framebuffer.get();
+    }
+
+    struct info {
+      vk::UniqueFramebuffer framebuffer;
+      int used_in_frame = 0;
+    };
+
+    vk::Device m_device;
+    std::unordered_map<std::uint64_t, info> framebuffers;
+  } get_framebuffer(device.get());
 
   vk::DebugUtilsMessengerEXT messenger;
   if constexpr (debug_layers) {
@@ -295,51 +428,138 @@ int main() {
   auto transfer_queue = device->getQueue(queues[transfer_queue_index].family, queues[transfer_queue_index].index);
   auto graphics_queue = device->getQueue(queues[graphics_queue_index].family, queues[graphics_queue_index].index);
 
-#pragma region CreateSwapchain
-  auto const& surface_caps = default_pd.getSurfaceCapabilitiesKHR(surface.get());
-  auto const& formats = default_pd.getSurfaceFormatsKHR(surface.get());
-  auto const& presentModes = default_pd.getSurfacePresentModesKHR(surface.get());
+  auto swapchain_data = create_swapchain(device.get(), default_pd, surface.get(), initial_width, initial_height,
+      {queues[present_queue_index].family, queues[present_queue_index].family});
 
-  auto format = formats[1];
-  auto present_mode = vk::PresentModeKHR::eMailbox;
-  vk::SwapchainCreateInfoKHR swapchain_info;
-  swapchain_info.surface = surface.get();
-  swapchain_info.imageColorSpace = format.colorSpace;
-  swapchain_info.imageArrayLayers = 1;
-  swapchain_info.imageExtent = vk::Extent2D(initial_width, initial_height);
-  swapchain_info.imageFormat = format.format;
-  swapchain_info.imageSharingMode = vk::SharingMode::eExclusive;
-  swapchain_info.clipped = true;
-  swapchain_info.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
-  swapchain_info.imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst;
-  swapchain_info.minImageCount = std::clamp<std::uint32_t>(12, surface_caps.minImageCount, surface_caps.maxImageCount);
+#pragma region imgui
+  ImGui::GetIO().Fonts->AddFontFromFileTTF("../../../../../res/alata.ttf", 17.0f);
 
-  std::uint32_t swapchain_queues[] = {queues[present_queue_index].family, queues[present_queue_index].family};
+  ImVec4* colors = ImGui::GetStyle().Colors;
+  colors[ImGuiCol_Text] = ImVec4(0.75f, 0.75f, 0.75f, 1.00f);
+  colors[ImGuiCol_TextDisabled] = ImVec4(0.35f, 0.35f, 0.35f, 1.00f);
+  colors[ImGuiCol_WindowBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.94f);
+  colors[ImGuiCol_ChildBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+  colors[ImGuiCol_PopupBg] = ImVec4(0.08f, 0.08f, 0.08f, 0.94f);
+  colors[ImGuiCol_Border] = ImVec4(0.00f, 0.00f, 0.00f, 0.50f);
+  colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+  colors[ImGuiCol_FrameBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.54f);
+  colors[ImGuiCol_FrameBgHovered] = ImVec4(0.37f, 0.14f, 0.14f, 0.67f);
+  colors[ImGuiCol_FrameBgActive] = ImVec4(0.39f, 0.20f, 0.20f, 0.67f);
+  colors[ImGuiCol_TitleBg] = ImVec4(0.04f, 0.04f, 0.04f, 1.00f);
+  colors[ImGuiCol_TitleBgActive] = ImVec4(0.48f, 0.16f, 0.16f, 1.00f);
+  colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.48f, 0.16f, 0.16f, 1.00f);
+  colors[ImGuiCol_MenuBarBg] = ImVec4(0.14f, 0.14f, 0.14f, 1.00f);
+  colors[ImGuiCol_ScrollbarBg] = ImVec4(0.02f, 0.02f, 0.02f, 0.53f);
+  colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.31f, 0.31f, 0.31f, 1.00f);
+  colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.41f, 0.41f, 0.41f, 1.00f);
+  colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.51f, 0.51f, 0.51f, 1.00f);
+  colors[ImGuiCol_CheckMark] = ImVec4(0.56f, 0.10f, 0.10f, 1.00f);
+  colors[ImGuiCol_SliderGrab] = ImVec4(1.00f, 0.19f, 0.19f, 0.40f);
+  colors[ImGuiCol_SliderGrabActive] = ImVec4(0.89f, 0.00f, 0.19f, 1.00f);
+  colors[ImGuiCol_Button] = ImVec4(1.00f, 0.19f, 0.19f, 0.40f);
+  colors[ImGuiCol_ButtonHovered] = ImVec4(0.80f, 0.17f, 0.00f, 1.00f);
+  colors[ImGuiCol_ButtonActive] = ImVec4(0.89f, 0.00f, 0.19f, 1.00f);
+  colors[ImGuiCol_Header] = ImVec4(0.33f, 0.35f, 0.36f, 0.53f);
+  colors[ImGuiCol_HeaderHovered] = ImVec4(0.76f, 0.28f, 0.44f, 0.67f);
+  colors[ImGuiCol_HeaderActive] = ImVec4(0.47f, 0.47f, 0.47f, 0.67f);
+  colors[ImGuiCol_Separator] = ImVec4(0.32f, 0.32f, 0.32f, 1.00f);
+  colors[ImGuiCol_SeparatorHovered] = ImVec4(0.32f, 0.32f, 0.32f, 1.00f);
+  colors[ImGuiCol_SeparatorActive] = ImVec4(0.32f, 0.32f, 0.32f, 1.00f);
+  colors[ImGuiCol_ResizeGrip] = ImVec4(1.00f, 1.00f, 1.00f, 0.85f);
+  colors[ImGuiCol_ResizeGripHovered] = ImVec4(1.00f, 1.00f, 1.00f, 0.60f);
+  colors[ImGuiCol_ResizeGripActive] = ImVec4(1.00f, 1.00f, 1.00f, 0.90f);
+  colors[ImGuiCol_Tab] = ImVec4(0.07f, 0.07f, 0.07f, 0.51f);
+  colors[ImGuiCol_TabHovered] = ImVec4(0.86f, 0.23f, 0.43f, 0.67f);
+  colors[ImGuiCol_TabActive] = ImVec4(0.19f, 0.19f, 0.19f, 0.57f);
+  colors[ImGuiCol_TabUnfocused] = ImVec4(0.05f, 0.05f, 0.05f, 0.90f);
+  colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.13f, 0.13f, 0.13f, 0.74f);
+  colors[ImGuiCol_PlotLines] = ImVec4(0.61f, 0.61f, 0.61f, 1.00f);
+  colors[ImGuiCol_PlotLinesHovered] = ImVec4(1.00f, 0.43f, 0.35f, 1.00f);
+  colors[ImGuiCol_PlotHistogram] = ImVec4(0.90f, 0.70f, 0.00f, 1.00f);
+  colors[ImGuiCol_PlotHistogramHovered] = ImVec4(1.00f, 0.60f, 0.00f, 1.00f);
+  colors[ImGuiCol_TableHeaderBg] = ImVec4(0.19f, 0.19f, 0.20f, 1.00f);
+  colors[ImGuiCol_TableBorderStrong] = ImVec4(0.31f, 0.31f, 0.35f, 1.00f);
+  colors[ImGuiCol_TableBorderLight] = ImVec4(0.23f, 0.23f, 0.25f, 1.00f);
+  colors[ImGuiCol_TableRowBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+  colors[ImGuiCol_TableRowBgAlt] = ImVec4(1.00f, 1.00f, 1.00f, 0.07f);
+  colors[ImGuiCol_TextSelectedBg] = ImVec4(0.26f, 0.59f, 0.98f, 0.35f);
+  colors[ImGuiCol_DragDropTarget] = ImVec4(1.00f, 1.00f, 0.00f, 0.90f);
+  colors[ImGuiCol_NavHighlight] = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
+  colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
+  colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.20f);
+  colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.35f);
 
-  if (swapchain_queues[0] != swapchain_queues[1]) {
-    swapchain_info.imageSharingMode = vk::SharingMode::eConcurrent;
-    swapchain_info.queueFamilyIndexCount = std::size(swapchain_queues);
-    swapchain_info.pQueueFamilyIndices = swapchain_queues;
-  }
-  swapchain_info.presentMode = present_mode;
-  swapchain_info.preTransform = surface_caps.currentTransform;
-  auto swapchain = device->createSwapchainKHRUnique(swapchain_info);
-  auto swapchain_images = device->getSwapchainImagesKHR(swapchain.get());
+  vk::AttachmentDescription imgui_color_attachment;
+  imgui_color_attachment.initialLayout = vk::ImageLayout::eTransferDstOptimal;
+  imgui_color_attachment.finalLayout = vk::ImageLayout::ePresentSrcKHR;
+  imgui_color_attachment.format = swapchain_data.surface_format.format;
+  imgui_color_attachment.loadOp = vk::AttachmentLoadOp::eLoad;
+  imgui_color_attachment.storeOp = vk::AttachmentStoreOp::eStore;
+  imgui_color_attachment.samples = vk::SampleCountFlagBits::e1;
 
-  std::vector<vk::UniqueImageView> swapchain_views;
-  for (auto const& image : swapchain_images) {
-    vk::ImageViewCreateInfo info;
-    info.image = image;
-    info.components = vk::ComponentMapping();
-    info.format = format.format;
-    info.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
-    info.subresourceRange.baseArrayLayer = 0;
-    info.subresourceRange.layerCount = 1;
-    info.subresourceRange.baseMipLevel = 0;
-    info.subresourceRange.levelCount = 1;
-    info.viewType = vk::ImageViewType::e2D;
-    swapchain_views.push_back(device->createImageViewUnique(info));
-  }
+  vk::AttachmentReference imgui_subpass_attachment(0, vk::ImageLayout::eColorAttachmentOptimal);
+  vk::SubpassDescription imgui_subpass;
+  imgui_subpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
+  imgui_subpass.setColorAttachments(imgui_subpass_attachment);
+
+  vk::SubpassDependency imgui_start_dependency;
+  imgui_start_dependency.dependencyFlags = vk::DependencyFlagBits::eByRegion;
+  imgui_start_dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+  imgui_start_dependency.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+  imgui_start_dependency.srcStageMask = vk::PipelineStageFlagBits::eTransfer;
+  imgui_start_dependency.dstSubpass = 0;
+  imgui_start_dependency.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
+  imgui_start_dependency.dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+
+  vk::SubpassDependency imgui_end_dependency;
+  imgui_end_dependency.dependencyFlags = vk::DependencyFlagBits::eByRegion;
+  imgui_end_dependency.srcSubpass = 0;
+  imgui_end_dependency.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
+  imgui_end_dependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+  imgui_end_dependency.dstSubpass = VK_SUBPASS_EXTERNAL;
+  imgui_end_dependency.dstAccessMask = vk::AccessFlagBits::eNoneKHR;
+  imgui_end_dependency.dstStageMask = vk::PipelineStageFlagBits::eBottomOfPipe;
+
+  std::array imgui_subpass_dependencies{imgui_start_dependency, imgui_end_dependency};
+
+  vk::RenderPassCreateInfo imgui_pass_info;
+  imgui_pass_info.setAttachments(imgui_color_attachment);
+  imgui_pass_info.setSubpasses(imgui_subpass);
+  imgui_pass_info.setDependencies(imgui_subpass_dependencies);
+  auto const imgui_renderpass = device->createRenderPassUnique(imgui_pass_info);
+
+  vk::DescriptorPoolCreateInfo descriptor_pool_info;
+  descriptor_pool_info.maxSets = 64;
+
+  std::array pool_sizes = {vk::DescriptorPoolSize{vk::DescriptorType::eCombinedImageSampler, 40}};
+  descriptor_pool_info.setPoolSizes(pool_sizes);
+  vk::UniqueDescriptorPool imgui_dpool = device->createDescriptorPoolUnique(descriptor_pool_info);
+
+  ImGui_ImplVulkan_InitInfo imgui_info{};
+  imgui_info.Instance = vk_instance.get();
+  imgui_info.PhysicalDevice = default_pd;
+  imgui_info.Device = device.get();
+  imgui_info.MinImageCount = swapchain_data.images.size();
+  imgui_info.ImageCount = swapchain_data.images.size();
+  imgui_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+  imgui_info.Queue = graphics_queue;
+  imgui_info.QueueFamily = queues[graphics_queue_index].family;
+  imgui_info.Subpass = 0;
+  imgui_info.DescriptorPool = imgui_dpool.get();
+  ImGui_ImplVulkan_Init(&imgui_info, imgui_renderpass.get());
+
+  // vk::FramebufferCreateInfo imgui_fbo_info;
+  // imgui_fbo_info.width = initial_width;
+  // imgui_fbo_info.height = initial_height;
+  // imgui_fbo_info.layers = 1;
+  // imgui_fbo_info.renderPass = imgui_renderpass.get();
+
+  // std::vector<vk::UniqueFramebuffer> imgui_framebuffers;
+  // for (int i = 0; i < swapchain_views.size(); ++i) {
+  //  imgui_fbo_info.setAttachments(swapchain_views[i].get());
+  //  imgui_framebuffers.push_back(device->createFramebufferUnique(imgui_fbo_info));
+  //}
+
 #pragma endregion
 
   vk::CommandPoolCreateInfo graphics_command_pool_info;
@@ -361,9 +581,7 @@ int main() {
   VmaAllocator allocator;
   vmaCreateAllocator(&alloc_info, &allocator);
 
-  auto cleanup_allocator = at_scope_end([&] {
-    vmaDestroyAllocator(allocator);
-    });
+  auto cleanup_allocator = at_scope_end([&] { vmaDestroyAllocator(allocator); });
 
 #pragma region BuildRenderPipeline
   auto const vert_shader = myrt::compile_file(shaderc_vertex_shader, "../../../../../src/myrt.vk/forward.vert");
@@ -474,14 +692,14 @@ int main() {
   viewport.viewportCount = 1;
 
   vk::AttachmentDescription attachment0;
-  attachment0.initialLayout = vk::ImageLayout::eColorAttachmentOptimal;
-  attachment0.finalLayout = vk::ImageLayout::eColorAttachmentOptimal;
+  attachment0.initialLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+  attachment0.finalLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
   attachment0.format = vk::Format::eR16G16B16A16Sfloat;
   attachment0.loadOp = vk::AttachmentLoadOp::eClear;
   attachment0.samples = vk::SampleCountFlagBits::e1;
   attachment0.storeOp = vk::AttachmentStoreOp::eStore;
   vk::AttachmentDescription attachment1 = attachment0;
-  attachment1.finalLayout = vk::ImageLayout::eColorAttachmentOptimal;
+  attachment1.finalLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
 
   vk::AttachmentDescription depth_attachment = attachment0;
   depth_attachment.format = vk::Format::eD24UnormS8Uint;
@@ -525,8 +743,8 @@ int main() {
   subpass_dependency_end.srcAccessMask =
       vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentWrite;
   subpass_dependency_end.dstSubpass = VK_SUBPASS_EXTERNAL;
-  subpass_dependency_end.dstStageMask = vk::PipelineStageFlagBits::eBottomOfPipe;
-  subpass_dependency_end.dstAccessMask = vk::AccessFlagBits::eNoneKHR;
+  subpass_dependency_end.dstStageMask = vk::PipelineStageFlagBits::eFragmentShader;
+  subpass_dependency_end.dstAccessMask = vk::AccessFlagBits::eShaderRead;
 
   std::array subpass_dependencies{subpass_dependency_start, subpass_dependency_end};
 
@@ -556,57 +774,268 @@ int main() {
   auto const render_pipeline = std::move(device->createGraphicsPipelineUnique(nullptr, gpi).value);
 #pragma endregion
 
+#pragma region BuildGbufferPipeline
+  auto const rvert_shader = myrt::compile_file(shaderc_vertex_shader, "../../../../../src/myrt.vk/resolve.vert");
+  vk::ShaderModuleCreateInfo rvertex_stage_info;
+  rvertex_stage_info.codeSize = sizeof(std::uint32_t) * rvert_shader.size();
+  rvertex_stage_info.pCode = rvert_shader.data();
+  auto rvertex_stage = device->createShaderModuleUnique(rvertex_stage_info);
+
+  auto const rfrag_shader = myrt::compile_file(shaderc_fragment_shader, "../../../../../src/myrt.vk/resolve.frag");
+  vk::ShaderModuleCreateInfo rfrag_shader_info;
+  rfrag_shader_info.codeSize = sizeof(std::uint32_t) * rfrag_shader.size();
+  rfrag_shader_info.pCode = rfrag_shader.data();
+  auto rfragment_stage = device->createShaderModuleUnique(rfrag_shader_info);
+
+  vk::UniqueSampler default_post_sampler;
+  {
+    vk::SamplerCreateInfo sci;
+    sci.addressModeU = vk::SamplerAddressMode::eClampToEdge;
+    sci.addressModeV = vk::SamplerAddressMode::eClampToEdge;
+    sci.addressModeW = vk::SamplerAddressMode::eClampToEdge;
+
+    sci.anisotropyEnable = true;
+    sci.compareEnable = false;
+    sci.minFilter = vk::Filter::eLinear;
+    sci.magFilter = vk::Filter::eLinear;
+    sci.maxAnisotropy = 16.0f;
+    sci.maxLod = 1000.0;
+    sci.minLod = -1000.0;
+    sci.mipmapMode = vk::SamplerMipmapMode::eLinear;
+    sci.unnormalizedCoordinates = false;
+    default_post_sampler = device->createSamplerUnique(sci, nullptr, sdl);
+  }
+
+  vk::UniqueDescriptorSetLayout resolve_dsl;
+  vk::UniquePipelineLayout resolve_pll;
+  vk::UniquePipeline resolve_pipeline;
+  vk::UniqueRenderPass resolve_pass;
+
+  std::vector<vk_image> resolve_images;
+  std::vector<vk::UniqueImageView> resolve_views;
+
+  {
+    std::array<vk::PipelineShaderStageCreateInfo, 2> stages;
+    {
+      stages[0].module = rvertex_stage.get();
+      stages[0].stage = vk::ShaderStageFlagBits::eVertex;
+      stages[0].pName = "main";
+      stages[1].module = rfragment_stage.get();
+      stages[1].stage = vk::ShaderStageFlagBits::eFragment;
+      stages[1].pName = "main";
+    }
+
+    vk::DescriptorSetLayoutBinding b0(
+        0u, vk::DescriptorType::eCombinedImageSampler, vk::ShaderStageFlagBits::eFragment, default_post_sampler.get());
+    vk::DescriptorSetLayoutBinding b1(
+        1u, vk::DescriptorType::eCombinedImageSampler, vk::ShaderStageFlagBits::eFragment, default_post_sampler.get());
+    std::array bindings{b0, b1};
+
+    vk::DescriptorSetLayoutCreateInfo dsl_info;
+    dsl_info.setBindings(bindings);
+    resolve_dsl = device->createDescriptorSetLayoutUnique(dsl_info, nullptr, sdl);
+
+    vk::PipelineLayoutCreateInfo ppi;
+    ppi.setSetLayouts(resolve_dsl.get());
+
+    vk::PushConstantRange rvs;
+    rvs.offset = 0;
+    rvs.size = 2*sizeof(rnu::mat4);
+    rvs.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment;
+    ppi.setPushConstantRanges(rvs);
+
+    resolve_pll = device->createPipelineLayoutUnique(ppi, nullptr, sdl);
+
+    vk::PipelineVertexInputStateCreateInfo vi;
+    vk::PipelineDepthStencilStateCreateInfo ds;
+
+    vk::AttachmentDescription rpat0;
+    rpat0.initialLayout = vk::ImageLayout::eTransferSrcOptimal;
+    rpat0.finalLayout = vk::ImageLayout::eTransferSrcOptimal;
+    rpat0.format = vk::Format::eR16G16B16A16Sfloat;
+    rpat0.loadOp = vk::AttachmentLoadOp::eDontCare;
+    rpat0.storeOp = vk::AttachmentStoreOp::eStore;
+    rpat0.samples = vk::SampleCountFlagBits::e1;
+
+    vk::AttachmentReference rpat0r(0, vk::ImageLayout::eColorAttachmentOptimal);
+
+    vk::SubpassDescription rsp;
+    rsp.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
+    rsp.setColorAttachments(rpat0r);
+
+    std::array<vk::SubpassDependency, 2> deps = {vk::SubpassDependency()
+                                                     .setSrcAccessMask(vk::AccessFlagBits::eTransferRead)
+                                                     .setSrcStageMask(vk::PipelineStageFlagBits::eTransfer)
+                                                     .setSrcSubpass(VK_SUBPASS_EXTERNAL)
+                                                     .setDstAccessMask(vk::AccessFlagBits::eColorAttachmentWrite)
+                                                     .setDstStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput)
+                                                     .setDstSubpass(0)
+                                                     .setDependencyFlags(vk::DependencyFlagBits::eByRegion),
+        vk::SubpassDependency()
+            .setSrcAccessMask(vk::AccessFlagBits::eColorAttachmentWrite)
+            .setSrcStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput)
+            .setSrcSubpass(0)
+            .setDstAccessMask(vk::AccessFlagBits::eTransferRead)
+            .setDstStageMask(vk::PipelineStageFlagBits::eTransfer)
+            .setDstSubpass(VK_SUBPASS_EXTERNAL)
+            .setDependencyFlags(vk::DependencyFlagBits::eByRegion)
+
+    };
+
+    vk::RenderPassCreateInfo rpi;
+    rpi.setAttachments(rpat0);
+    rpi.setSubpasses(rsp);
+    rpi.setDependencies(deps);
+    resolve_pass = device->createRenderPassUnique(rpi, nullptr, sdl);
+
+    vk::PipelineColorBlendAttachmentState attstate;
+    attstate.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+                              vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+    attstate.blendEnable = false;
+    std::array blend_attachments{attstate};
+
+    vk::PipelineColorBlendStateCreateInfo color_blend_state;
+    color_blend_state.setAttachments(blend_attachments);
+    color_blend_state.logicOpEnable = false;
+
+    vk::GraphicsPipelineCreateInfo gpi;
+    gpi.layout = resolve_pll.get();
+    gpi.setStages(stages);
+    gpi.pTessellationState = nullptr;
+
+    gpi.pVertexInputState = &vi;
+    gpi.pDynamicState = &dynamic_state;
+    gpi.pColorBlendState = &color_blend_state;
+    gpi.pRasterizationState = &rasterization;
+    gpi.pDepthStencilState = &ds;
+    gpi.pInputAssemblyState = &input_assembly;
+    gpi.pMultisampleState = &multisample;
+    gpi.pViewportState = &viewport;
+
+    gpi.renderPass = resolve_pass.get();
+    gpi.subpass = 0;
+    resolve_pipeline = device->createGraphicsPipelineUnique(nullptr, gpi, nullptr, sdl);
+
+    {
+      vk::CommandBufferAllocateInfo cmd_info;
+      cmd_info.commandBufferCount = 1;
+      cmd_info.commandPool = graphics_command_pool.get();
+      cmd_info.level = vk::CommandBufferLevel::ePrimary;
+      auto pac = std::move(device->allocateCommandBuffersUnique(cmd_info)[0]);
+      pac->begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
+      resolve_images.clear();
+      resolve_views.clear();
+      for (int i = 0; i < swapchain_data.images.size(); ++i) {
+        resolve_images.push_back(get_image(device.get(), allocator, initial_width, initial_height, vk::Format::eR16G16B16A16Sfloat,
+                vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferSrc));
+
+        vk::ImageViewCreateInfo attv;
+        attv.viewType = vk::ImageViewType::e2D;
+        attv.components = vk::ComponentMapping();
+        attv.format = vk::Format::eR16G16B16A16Sfloat;
+        attv.image = resolve_images[i].image.get();
+        attv.subresourceRange = vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1);
+        resolve_views.push_back(device->createImageViewUnique(attv, nullptr, sdl));
+
+        vk::ImageMemoryBarrier2KHR img0_transition;
+        img0_transition.oldLayout = vk::ImageLayout::eUndefined;
+        img0_transition.newLayout = vk::ImageLayout::eTransferSrcOptimal;
+        img0_transition.srcStageMask = vk::PipelineStageFlagBits2KHR::eNone;
+        img0_transition.dstStageMask = vk::PipelineStageFlagBits2KHR::eTransfer;
+        img0_transition.image = resolve_images[i].image.get();
+        img0_transition.srcQueueFamilyIndex = queues[present_queue_index].family;
+        img0_transition.dstQueueFamilyIndex = queues[graphics_queue_index].family;
+        img0_transition.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+        img0_transition.subresourceRange.baseMipLevel = 0;
+        img0_transition.subresourceRange.levelCount = 1;
+        img0_transition.subresourceRange.baseArrayLayer = 0;
+        img0_transition.subresourceRange.layerCount = 1;
+        img0_transition.srcAccessMask = vk::AccessFlagBits2KHR::eNone;
+        img0_transition.dstAccessMask = vk::AccessFlagBits2KHR::eTransferRead;
+
+        vk::DependencyInfoKHR dp;
+        dp.dependencyFlags = vk::DependencyFlagBits::eByRegion;
+        dp.setImageMemoryBarriers(img0_transition);
+        pac->pipelineBarrier2KHR(dp, ext);
+      }
+      pac->end();
+
+      vk::SubmitInfo submit;
+      submit.setCommandBuffers(pac.get());
+      graphics_queue.submit(submit);
+      graphics_queue.waitIdle();
+    }
+  }
+
+#pragma endregion
+
   std::vector<vk_image> attachment0img;
-  for (int i = 0; i < swapchain_images.size(); ++i)
-    attachment0img.push_back(get_image(device.get(), allocator, initial_width, initial_height, vk::Format::eR16G16B16A16Sfloat,
-        vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled |
-            vk::ImageUsageFlagBits::eTransferSrc));
-
   std::vector<vk_image> attachment1img;
-  for (int i = 0; i < swapchain_images.size(); ++i)
-    attachment1img.push_back(get_image(device.get(), allocator, initial_width, initial_height, vk::Format::eR16G16B16A16Sfloat,
-        vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled));
-
   std::vector<vk_image> attachmentdimg;
-  for (int i = 0; i < swapchain_images.size(); ++i)
-    attachmentdimg.push_back(get_image(device.get(), allocator, initial_width, initial_height, vk::Format::eD24UnormS8Uint,
-        vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled));
-
   std::vector<std::array<vk::UniqueImageView, 3>> attachment_views_unique;
   std::vector<std::array<vk::ImageView, 3>> attachment_views;
+
+  for (int i = 0; i < swapchain_data.images.size(); ++i)
+    attachment0img.push_back(
+        get_image(device.get(), allocator, initial_width, initial_height, vk::Format::eR16G16B16A16Sfloat,
+            vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled |
+                vk::ImageUsageFlagBits::eTransferSrc));
+
+  for (int i = 0; i < swapchain_data.images.size(); ++i)
+    attachment1img.push_back(get_image(device.get(), allocator, initial_width, initial_height,
+        vk::Format::eR16G16B16A16Sfloat, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled));
+
+  for (int i = 0; i < swapchain_data.images.size(); ++i)
+    attachmentdimg.push_back(
+        get_image(device.get(), allocator, initial_width, initial_height, vk::Format::eD24UnormS8Uint,
+            vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled));
 
   vk::ImageViewCreateInfo img0vinfo_base;
   img0vinfo_base.components = vk::ComponentMapping{};
   img0vinfo_base.viewType = vk::ImageViewType::e2D;
-  for (int i = 0; i < swapchain_images.size(); ++i) {
+
+  vk::DescriptorSetAllocateInfo dsal;
+  dsal.descriptorPool = imgui_dpool.get();
+  dsal.setSetLayouts(resolve_dsl.get());
+  std::vector<vk::UniqueDescriptorSet> resolve_descriptor_sets;
+
+  for (int i = 0; i < swapchain_data.images.size(); ++i) {
+    resolve_descriptor_sets.push_back(std::move(device->allocateDescriptorSetsUnique(dsal, sdl)[0]));
     img0vinfo_base.format = vk::Format::eR16G16B16A16Sfloat;
     img0vinfo_base.subresourceRange = vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1);
     auto& arr = attachment_views_unique.emplace_back();
     img0vinfo_base.image = attachment0img[i].image.get();
-    arr[0] = device->createImageViewUnique(img0vinfo_base);
+    arr[0] = device->createImageViewUnique(img0vinfo_base, nullptr, sdl);
     img0vinfo_base.image = attachment1img[i].image.get();
-    arr[1] = device->createImageViewUnique(img0vinfo_base);
+    arr[1] = device->createImageViewUnique(img0vinfo_base, nullptr, sdl);
     img0vinfo_base.image = attachmentdimg[i].image.get();
     img0vinfo_base.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth | vk::ImageAspectFlagBits::eStencil;
     img0vinfo_base.format = vk::Format::eD24UnormS8Uint;
-    arr[2] = device->createImageViewUnique(img0vinfo_base);
+    arr[2] = device->createImageViewUnique(img0vinfo_base, nullptr, sdl);
 
     auto& nu = attachment_views.emplace_back();
     for (int i = 0; i < size(nu); ++i) nu[i] = arr[i].get();
+
+    vk::DescriptorImageInfo dinf;
+    dinf.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    dinf.imageView = arr[0].get();
+
+    vk::WriteDescriptorSet wds;
+    wds.descriptorCount = 1;
+    wds.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+    wds.dstSet = resolve_descriptor_sets[i].get();
+    wds.dstBinding = 0;
+    wds.pImageInfo = &dinf;
+
+    vk::DescriptorImageInfo dinf2;
+    dinf2.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    dinf2.imageView = arr[1].get();
+    auto wds2 = wds;
+    wds2.dstBinding = 1;
+    wds2.pImageInfo = &dinf2;
+
+    device->updateDescriptorSets({wds, wds2}, nullptr);
   }
-
-  vk::FramebufferCreateInfo fb_info;
-  fb_info.width = initial_width;
-  fb_info.height = initial_height;
-  fb_info.renderPass = renderpass.get();
-  fb_info.layers = 1;
-
-  std::vector<vk::UniqueFramebuffer> framebuffers;
-  for (int i = 0; i < swapchain_images.size(); ++i) {
-    fb_info.setAttachments(attachment_views[i]);
-    framebuffers.push_back(device->createFramebufferUnique(fb_info));
-  }
-
   {
     vk::CommandBufferAllocateInfo cmd_info;
     cmd_info.commandBufferCount = 1;
@@ -614,12 +1043,12 @@ int main() {
     cmd_info.level = vk::CommandBufferLevel::ePrimary;
     auto pac = std::move(device->allocateCommandBuffersUnique(cmd_info)[0]);
     pac->begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
-    for (int i = 0; i < swapchain_images.size(); ++i) {
+    for (int i = 0; i < swapchain_data.images.size(); ++i) {
       vk::ImageMemoryBarrier2KHR img0_transition;
       img0_transition.oldLayout = vk::ImageLayout::eUndefined;
-      img0_transition.newLayout = vk::ImageLayout::eColorAttachmentOptimal;
+      img0_transition.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
       img0_transition.srcStageMask = vk::PipelineStageFlagBits2KHR::eNone;
-      img0_transition.dstStageMask = vk::PipelineStageFlagBits2KHR::eColorAttachmentOutput;
+      img0_transition.dstStageMask = vk::PipelineStageFlagBits2KHR::eFragmentShader;
       img0_transition.image = attachment0img[i].image.get();
       img0_transition.srcQueueFamilyIndex = queues[present_queue_index].family;
       img0_transition.dstQueueFamilyIndex = queues[graphics_queue_index].family;
@@ -629,7 +1058,7 @@ int main() {
       img0_transition.subresourceRange.baseArrayLayer = 0;
       img0_transition.subresourceRange.layerCount = 1;
       img0_transition.srcAccessMask = vk::AccessFlagBits2KHR::eNone;
-      img0_transition.dstAccessMask = vk::AccessFlagBits2KHR::eColorAttachmentWrite;
+      img0_transition.dstAccessMask = vk::AccessFlagBits2KHR::eShaderRead;
       vk::ImageMemoryBarrier2KHR img1_transition = img0_transition;
       img1_transition.image = attachment1img[i].image.get();
       vk::ImageMemoryBarrier2KHR imgd_transition = img0_transition;
@@ -640,7 +1069,7 @@ int main() {
       imgd_transition.newLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
 
       vk::ImageMemoryBarrier2KHR imgsc_transition = img0_transition;
-      imgsc_transition.image = swapchain_images[i];
+      imgsc_transition.image = swapchain_data.images[i];
       imgsc_transition.newLayout = vk::ImageLayout::ePresentSrcKHR;
       imgsc_transition.dstAccessMask = vk::AccessFlagBits2KHR::eNone;
       imgsc_transition.srcQueueFamilyIndex = queues[present_queue_index].family;
@@ -653,6 +1082,8 @@ int main() {
       dep.setImageMemoryBarriers(imgbar);
 
       pac->pipelineBarrier2KHR(dep, ext);
+
+      ImGui_ImplVulkan_CreateFontsTexture(pac.get());
     }
     pac->end();
 
@@ -663,13 +1094,13 @@ int main() {
   }
 
   vk::CommandBufferAllocateInfo render_cmd_info;
-  render_cmd_info.commandBufferCount = swapchain_images.size();
+  render_cmd_info.commandBufferCount = swapchain_data.images.size();
   render_cmd_info.commandPool = graphics_command_pool.get();
   render_cmd_info.level = vk::CommandBufferLevel::ePrimary;
   auto const render_cmds = device->allocateCommandBuffersUnique(render_cmd_info);
 
   std::vector<vk::UniqueFence> render_fences;
-  for (int i = 0; i < swapchain_images.size(); ++i) {
+  for (int i = 0; i < swapchain_data.images.size(); ++i) {
     render_fences.push_back(device->createFenceUnique({vk::FenceCreateFlagBits::eSignaled}));
   }
 
@@ -680,18 +1111,21 @@ int main() {
     rnu::mat4 view;
     rnu::mat4 proj;
   } matrices;
-  matrices.proj = rnu::cameraf::projection(rnu::radians(70), float(initial_width) / float(initial_height), 0.01f, 1000.f, true);
+  matrices.proj =
+      rnu::cameraf::projection(rnu::radians(70), float(initial_width) / float(initial_height), 0.01f, 1000.f, true);
 
   rnu::cameraf camera(rnu::vec3(0.0f, 0.0f, 3.f));
 
-  auto obj = myrt::obj::load_obj("../../../../../res/bunny.obj");
+  auto obj = myrt::obj::load_obj("../../../../../res/ball.obj");
   auto bunny = myrt::obj::triangulate(obj[0]);
 
-  rnu::mat4 tfs[]{
-      rnu::translation(rnu::vec3(-2.4, 0, 0)),
-      rnu::translation(rnu::vec3(2.4, 0, 0)),
-      rnu::translation(rnu::vec3(0, 0, 0)),
-  };
+  std::vector<rnu::mat4> tfs{};
+
+  for (int x = 0; x < 200; ++x) {
+    for (int y = 0; y < 200; ++y) {
+      tfs.push_back(rnu::translation(rnu::vec3(2 * x, 0, 2 * y)));
+    }
+  }
 
   VkBuffer staging;
   VmaAllocation staging_alloc;
@@ -727,7 +1161,6 @@ int main() {
     device->unmapMemory(staging_alloc->GetMemory());
   }
 
-
   VkBuffer vbo;
   VmaAllocation vbo_alloc;
   VkBuffer nbo;
@@ -745,7 +1178,7 @@ int main() {
     vmaDestroyBuffer(allocator, ubo, ubo_alloc);
     vmaDestroyBuffer(allocator, tbo, tbo_alloc);
     vmaDestroyBuffer(allocator, ibo, ibo_alloc);
-    });
+  });
 
   vk::BufferCreateInfo bci;
   bci.sharingMode = vk::SharingMode::eExclusive;
@@ -769,7 +1202,43 @@ int main() {
     vk::CommandBufferAllocateInfo alloc(transfer_pool.get(), vk::CommandBufferLevel::ePrimary, 1);
     auto c = std::move(device->allocateCommandBuffersUnique(alloc)[0]);
     c->begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
-    { 
+    {
+      {
+        vk::BufferMemoryBarrier2KHR targetBarrier;
+        targetBarrier.srcStageMask = vk::PipelineStageFlagBits2KHR::eVertexInput;
+        targetBarrier.srcQueueFamilyIndex = queues[graphics_queue_index].family;
+        targetBarrier.srcAccessMask = vk::AccessFlagBits2KHR::eVertexAttributeRead;
+
+        targetBarrier.dstStageMask = vk::PipelineStageFlagBits2KHR::eTransfer;
+        targetBarrier.dstQueueFamilyIndex = queues[transfer_queue_index].family;
+        targetBarrier.dstAccessMask = vk::AccessFlagBits2KHR::eTransferWrite;
+
+        targetBarrier.size = VK_WHOLE_SIZE;
+        targetBarrier.offset = 0;
+
+        auto const copy_for_buffer = [&](vk::Buffer buffer) {
+          auto copy = targetBarrier;
+          copy.buffer = buffer;
+          return copy;
+        };
+        auto vbob = copy_for_buffer(vbo);
+        auto nbob = copy_for_buffer(nbo);
+        auto ubob = copy_for_buffer(ubo);
+        auto tbob = copy_for_buffer(tbo);
+
+        vk::BufferMemoryBarrier2KHR indexBarrier = targetBarrier;
+        indexBarrier.srcStageMask = vk::PipelineStageFlagBits2KHR::eIndexInput;
+        indexBarrier.srcAccessMask = vk::AccessFlagBits2KHR::eIndexRead;
+        indexBarrier.buffer = ibo;
+
+        std::array buffer_barriers{vbob, nbob, ubob, tbob, indexBarrier};
+
+        vk::DependencyInfoKHR dep;
+        dep.setBufferMemoryBarriers(buffer_barriers);
+        dep.dependencyFlags = vk::DependencyFlagBits::eByRegion;
+        c->pipelineBarrier2KHR(dep, ext);
+      }
+
       vk::BufferCopy region(0, 0, bytes(bunny[0].positions));
       c->copyBuffer(staging, vbo, region, ext);
 
@@ -788,6 +1257,42 @@ int main() {
       region.srcOffset += region.size;
       region.size = bytes(tfs);
       c->copyBuffer(staging, tbo, region, ext);
+
+      {
+        vk::BufferMemoryBarrier2KHR targetBarrier;
+        targetBarrier.srcStageMask = vk::PipelineStageFlagBits2KHR::eTransfer;
+        targetBarrier.srcQueueFamilyIndex = queues[transfer_queue_index].family;
+        targetBarrier.srcAccessMask = vk::AccessFlagBits2KHR::eTransferWrite;
+
+        targetBarrier.dstStageMask = vk::PipelineStageFlagBits2KHR::eVertexInput;
+        targetBarrier.dstQueueFamilyIndex = queues[graphics_queue_index].family;
+        targetBarrier.dstAccessMask = vk::AccessFlagBits2KHR::eVertexAttributeRead;
+
+        targetBarrier.size = VK_WHOLE_SIZE;
+        targetBarrier.offset = 0;
+
+        auto const copy_for_buffer = [&](vk::Buffer buffer) {
+          auto copy = targetBarrier;
+          copy.buffer = buffer;
+          return copy;
+        };
+        auto vbob = copy_for_buffer(vbo);
+        auto nbob = copy_for_buffer(nbo);
+        auto ubob = copy_for_buffer(ubo);
+        auto tbob = copy_for_buffer(tbo);
+
+        vk::BufferMemoryBarrier2KHR indexBarrier = targetBarrier;
+        indexBarrier.dstStageMask = vk::PipelineStageFlagBits2KHR::eIndexInput;
+        indexBarrier.dstAccessMask = vk::AccessFlagBits2KHR::eIndexRead;
+        indexBarrier.buffer = ibo;
+
+        std::array buffer_barriers{vbob, nbob, ubob, tbob, indexBarrier};
+
+        vk::DependencyInfoKHR dep;
+        dep.setBufferMemoryBarriers(buffer_barriers);
+        dep.dependencyFlags = vk::DependencyFlagBits::eByRegion;
+        c->pipelineBarrier2KHR(dep, ext);
+      }
     }
 
     c->end();
@@ -802,13 +1307,219 @@ int main() {
 
   auto current_time = std::chrono::high_resolution_clock::now();
 
+  double dt_smooth = 0.0;
+
+  std::vector<float> delta_times(500);
+
+  bool rebuild_swapchain = false;
+
   while (!glfwWindowShouldClose(window.get())) {
+    if (rebuild_swapchain) {
+#pragma region rebuildSwapchain
+      device->waitIdle();
+      swapchain_data.reset();
+
+      glfwGetWindowSize(window.get(), &initial_width, &initial_height);
+      ImGui::GetIO().DisplaySize = ImVec2(initial_width, initial_height);
+
+      swapchain_data = create_swapchain(device.get(), default_pd, surface.get(), initial_width, initial_height,
+          {queues[present_queue_index].family, queues[present_queue_index].family});
+
+      ImGui_ImplVulkan_SetMinImageCount(swapchain_data.images.size());
+
+      attachment0img.clear();
+      attachment1img.clear();
+      attachmentdimg.clear();
+      attachment_views_unique.clear();
+      attachment_views.clear();
+
+      for (int i = 0; i < swapchain_data.images.size(); ++i)
+        attachment0img.push_back(
+            get_image(device.get(), allocator, initial_width, initial_height, vk::Format::eR16G16B16A16Sfloat,
+                vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled |
+                    vk::ImageUsageFlagBits::eTransferSrc));
+
+      for (int i = 0; i < swapchain_data.images.size(); ++i)
+        attachment1img.push_back(
+            get_image(device.get(), allocator, initial_width, initial_height, vk::Format::eR16G16B16A16Sfloat,
+                vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled));
+
+      for (int i = 0; i < swapchain_data.images.size(); ++i)
+        attachmentdimg.push_back(
+            get_image(device.get(), allocator, initial_width, initial_height, vk::Format::eD24UnormS8Uint,
+                vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled));
+
+      vk::ImageViewCreateInfo img0vinfo_base;
+      img0vinfo_base.components = vk::ComponentMapping{};
+      img0vinfo_base.viewType = vk::ImageViewType::e2D;
+
+      {
+        vk::CommandBufferAllocateInfo cmd_info;
+        cmd_info.commandBufferCount = 1;
+        cmd_info.commandPool = graphics_command_pool.get();
+        cmd_info.level = vk::CommandBufferLevel::ePrimary;
+        auto pac = std::move(device->allocateCommandBuffersUnique(cmd_info)[0]);
+        pac->begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
+        resolve_images.clear();
+        resolve_views.clear();
+        for (int i = 0; i < swapchain_data.images.size(); ++i) {
+          resolve_images.push_back(
+              get_image(device.get(), allocator, initial_width, initial_height, vk::Format::eR16G16B16A16Sfloat,
+                  vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferSrc));
+
+          vk::ImageViewCreateInfo attv;
+          attv.viewType = vk::ImageViewType::e2D;
+          attv.components = vk::ComponentMapping();
+          attv.format = vk::Format::eR16G16B16A16Sfloat;
+          attv.image = resolve_images[i].image.get();
+          attv.subresourceRange = vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1);
+          resolve_views.push_back(device->createImageViewUnique(attv, nullptr, sdl));
+
+          vk::ImageMemoryBarrier2KHR img0_transition;
+          img0_transition.oldLayout = vk::ImageLayout::eUndefined;
+          img0_transition.newLayout = vk::ImageLayout::eTransferSrcOptimal;
+          img0_transition.srcStageMask = vk::PipelineStageFlagBits2KHR::eNone;
+          img0_transition.dstStageMask = vk::PipelineStageFlagBits2KHR::eTransfer;
+          img0_transition.image = resolve_images[i].image.get();
+          img0_transition.srcQueueFamilyIndex = queues[present_queue_index].family;
+          img0_transition.dstQueueFamilyIndex = queues[graphics_queue_index].family;
+          img0_transition.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+          img0_transition.subresourceRange.baseMipLevel = 0;
+          img0_transition.subresourceRange.levelCount = 1;
+          img0_transition.subresourceRange.baseArrayLayer = 0;
+          img0_transition.subresourceRange.layerCount = 1;
+          img0_transition.srcAccessMask = vk::AccessFlagBits2KHR::eNone;
+          img0_transition.dstAccessMask = vk::AccessFlagBits2KHR::eTransferRead;
+
+          vk::DependencyInfoKHR dp;
+          dp.dependencyFlags = vk::DependencyFlagBits::eByRegion;
+          dp.setImageMemoryBarriers(img0_transition);
+          pac->pipelineBarrier2KHR(dp, ext);
+        }
+        pac->end();
+
+        vk::SubmitInfo submit;
+        submit.setCommandBuffers(pac.get());
+        graphics_queue.submit(submit);
+        graphics_queue.waitIdle();
+      }
+
+      for (int i = 0; i < swapchain_data.images.size(); ++i) {
+        img0vinfo_base.format = vk::Format::eR16G16B16A16Sfloat;
+        img0vinfo_base.subresourceRange = vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1);
+        auto& arr = attachment_views_unique.emplace_back();
+        img0vinfo_base.image = attachment0img[i].image.get();
+        arr[0] = device->createImageViewUnique(img0vinfo_base);
+        img0vinfo_base.image = attachment1img[i].image.get();
+        arr[1] = device->createImageViewUnique(img0vinfo_base);
+        img0vinfo_base.image = attachmentdimg[i].image.get();
+        img0vinfo_base.subresourceRange.aspectMask =
+            vk::ImageAspectFlagBits::eDepth | vk::ImageAspectFlagBits::eStencil;
+        img0vinfo_base.format = vk::Format::eD24UnormS8Uint;
+        arr[2] = device->createImageViewUnique(img0vinfo_base);
+
+        auto& nu = attachment_views.emplace_back();
+        for (int i = 0; i < size(nu); ++i) nu[i] = arr[i].get();
+
+        vk::DescriptorImageInfo dinf;
+        dinf.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        dinf.imageView = attachment_views[i][0];
+
+        vk::WriteDescriptorSet wds;
+        wds.descriptorCount = 1;
+        wds.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+        wds.dstSet = resolve_descriptor_sets[i].get();
+        wds.dstBinding = 0;
+        wds.pImageInfo = &dinf;
+
+        vk::DescriptorImageInfo dinf2;
+        dinf2.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        dinf2.imageView = attachment_views[i][1];
+        auto wds2 = wds;
+        wds2.dstBinding = 1;
+        wds2.pImageInfo = &dinf2;
+
+        device->updateDescriptorSets({wds, wds2}, nullptr);
+      }
+      {
+        vk::CommandBufferAllocateInfo cmd_info;
+        cmd_info.commandBufferCount = 1;
+        cmd_info.commandPool = graphics_command_pool.get();
+        cmd_info.level = vk::CommandBufferLevel::ePrimary;
+        auto pac = std::move(device->allocateCommandBuffersUnique(cmd_info)[0]);
+        pac->begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
+        for (int i = 0; i < swapchain_data.images.size(); ++i) {
+          vk::ImageMemoryBarrier2KHR img0_transition;
+          img0_transition.oldLayout = vk::ImageLayout::eUndefined;
+          img0_transition.srcQueueFamilyIndex = queues[present_queue_index].family;
+          img0_transition.srcStageMask = vk::PipelineStageFlagBits2KHR::eNone;
+          img0_transition.srcAccessMask = vk::AccessFlagBits2KHR::eNone;
+
+          img0_transition.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+          img0_transition.dstQueueFamilyIndex = queues[graphics_queue_index].family;
+          img0_transition.dstStageMask = vk::PipelineStageFlagBits2KHR::eFragmentShader;
+          img0_transition.dstAccessMask = vk::AccessFlagBits2KHR::eShaderRead;
+
+          img0_transition.image = attachment0img[i].image.get();
+          img0_transition.subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+
+          vk::ImageMemoryBarrier2KHR img1_transition = img0_transition;
+          img1_transition.image = attachment1img[i].image.get();
+          vk::ImageMemoryBarrier2KHR imgd_transition = img0_transition;
+          imgd_transition.subresourceRange.aspectMask =
+              vk::ImageAspectFlagBits::eDepth | vk::ImageAspectFlagBits::eStencil;
+          imgd_transition.image = attachmentdimg[i].image.get();
+          imgd_transition.dstStageMask = vk::PipelineStageFlagBits2KHR::eEarlyFragmentTests;
+          imgd_transition.dstAccessMask = vk::AccessFlagBits2KHR::eDepthStencilAttachmentWrite;
+          imgd_transition.newLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+
+          vk::ImageMemoryBarrier2KHR imgsc_transition = img0_transition;
+          imgsc_transition.image = swapchain_data.images[i];
+          imgsc_transition.newLayout = vk::ImageLayout::ePresentSrcKHR;
+          imgsc_transition.dstAccessMask = vk::AccessFlagBits2KHR::eNone;
+          imgsc_transition.srcQueueFamilyIndex = queues[present_queue_index].family;
+          imgsc_transition.dstQueueFamilyIndex = queues[present_queue_index].family;
+
+          std::array imgbar{img0_transition, img1_transition, imgd_transition, imgsc_transition};
+
+          vk::DependencyInfoKHR dep;
+          dep.dependencyFlags = vk::DependencyFlagBits::eByRegion;
+          dep.setImageMemoryBarriers(imgbar);
+
+          pac->pipelineBarrier2KHR(dep, ext);
+
+          ImGui_ImplVulkan_CreateFontsTexture(pac.get());
+        }
+        pac->end();
+
+        vk::SubmitInfo submit;
+        submit.setCommandBuffers(pac.get());
+        graphics_queue.submit(submit);
+        graphics_queue.waitIdle();
+      }
+      rebuild_swapchain = false;
+
+#pragma endregion
+    }
+
+    get_framebuffer.new_frame();
+    ImGui::NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui_ImplVulkan_NewFrame();
+
     auto const delta_time = std::chrono::duration_cast<std::chrono::duration<double>>(
         std::chrono::high_resolution_clock::now() - current_time);
     current_time = std::chrono::high_resolution_clock::now();
 
-    uint32_t const current_image = device->acquireNextImageKHR(
-        swapchain.get(), std::numeric_limits<unsigned long long>::max(), image_available_sem.get(), nullptr);
+    auto const [result, current_image] = device->acquireNextImageKHR(swapchain_data.swapchain.get(),
+        std::numeric_limits<unsigned long long>::max(), image_available_sem.get(), nullptr);
+
+    if (result == vk::Result::eErrorOutOfDateKHR) {
+      rebuild_swapchain = true;
+      continue;
+    } else if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR) {
+      throw std::runtime_error("failed to acquire swap chain image!");
+    }
 
     device->waitForFences(render_fences[current_image].get(), true, std::numeric_limits<uint64_t>::max());
     device->resetFences(render_fences[current_image].get());
@@ -817,32 +1528,62 @@ int main() {
     c->reset();
     c->begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
     {
-      std::array clear_values{vk::ClearValue(vk::ClearColorValue(std::array{0.2f, 0.2f, 0.2f, 1.f})),
-          vk::ClearValue(vk::ClearColorValue(std::array{0.2f, 0.2f, 0.2f, 1.f})),
+      std::array clear_values{vk::ClearValue(vk::ClearColorValue(std::array{0,0,0,0})),
+          vk::ClearValue(vk::ClearColorValue(std::array{0, 0, 0, 0})),
           vk::ClearValue(vk::ClearDepthStencilValue(1.f, 0))};
 
       vk::RenderPassBeginInfo rpbegin;
       rpbegin.renderPass = renderpass.get();
-      rpbegin.renderArea = vk::Rect2D({0, 0}, {initial_width, initial_height});
+      rpbegin.renderArea = vk::Rect2D({0, 0}, {uint32_t(initial_width), uint32_t(initial_height)});
       rpbegin.setClearValues(clear_values);
-      rpbegin.framebuffer = framebuffers[current_image].get();
+
+      auto const main_fb =
+          get_framebuffer(initial_width, initial_height, rpbegin.renderPass, attachment_views[current_image]);
+      rpbegin.framebuffer = main_fb;
+      c->beginRenderPass(rpbegin, vk::SubpassContents::eInline);
       c->bindPipeline(vk::PipelineBindPoint::eGraphics, render_pipeline.get());
       c->setViewport(0, vk::Viewport(0, 0, initial_width, initial_height, 0, 1));
-      c->setScissor(0, vk::Rect2D({0, 0}, {initial_width, initial_height}));
-      c->beginRenderPass(rpbegin, vk::SubpassContents::eInline);
+      c->setScissor(0, vk::Rect2D({0, 0}, {uint32_t(initial_width), uint32_t(initial_height)}));
 
       if (glfwGetWindowAttrib(window.get(), GLFW_FOCUSED)) {
-        camera.axis(float(delta_time.count()) * (1.f + 5 * glfwGetKey(window.get(), GLFW_KEY_LEFT_SHIFT)),
-            glfwGetKey(window.get(), GLFW_KEY_W), glfwGetKey(window.get(), GLFW_KEY_S),
-            glfwGetKey(window.get(), GLFW_KEY_A), glfwGetKey(window.get(), GLFW_KEY_D),
-            glfwGetKey(window.get(), GLFW_KEY_E), glfwGetKey(window.get(), GLFW_KEY_Q));
+        if (!ImGui::GetIO().WantCaptureKeyboard) {
+          camera.axis(float(delta_time.count()) * (1.f + 5 * glfwGetKey(window.get(), GLFW_KEY_LEFT_SHIFT)),
+              glfwGetKey(window.get(), GLFW_KEY_W), glfwGetKey(window.get(), GLFW_KEY_S),
+              glfwGetKey(window.get(), GLFW_KEY_A), glfwGetKey(window.get(), GLFW_KEY_D),
+              glfwGetKey(window.get(), GLFW_KEY_E), glfwGetKey(window.get(), GLFW_KEY_Q));
+        }
 
-        double xpos, ypos;
-        glfwGetCursorPos(window.get(), &xpos, &ypos);
+        if (!ImGui::GetIO().WantCaptureMouse) {
+          double xpos, ypos;
+          glfwGetCursorPos(window.get(), &xpos, &ypos);
 
-        camera.mouse(float(xpos), float(ypos), glfwGetMouseButton(window.get(), GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS);
+          camera.mouse(
+              float(xpos), float(ypos), glfwGetMouseButton(window.get(), GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS);
+        }
       }
+
+      matrices.proj =
+          rnu::cameraf::projection(rnu::radians(70), float(initial_width) / float(initial_height), 0.01f, 1000.f, true);
       matrices.view = rnu::mat4(1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1) * camera.matrix(false);
+
+      static int avg = 20;
+      double factor = 1.0 / avg;
+      dt_smooth = ((1.0 - factor) * dt_smooth) + (factor * delta_time.count());
+
+      std::rotate(begin(delta_times), std::next(begin(delta_times)), end(delta_times));
+      delta_times.back() = delta_time.count();
+
+      if (ImGui::Begin("Test")) {
+        ImGui::DragInt("Average frames", &avg, 0.01f, 1, 1000, "N = %d");
+        ImGui::LabelText("Framerate (avg. over N)", "%.3f", 1.0 / dt_smooth);
+        ImGui::LabelText("Frametime (avg. over N)", "%.3f ms", 1000 * dt_smooth);
+
+        ImGui::PlotHistogram(
+            "Frametimes", delta_times.data(), delta_times.size(), 0, nullptr, 0.f, 0.016f, ImVec2(0, 120));
+
+        ImGui::Separator();
+        ImGui::End();
+      }
 
       c->pushConstants(render_layout.get(), vk::ShaderStageFlagBits::eVertex, 0, sizeof(matrices), &matrices);
 
@@ -852,27 +1593,30 @@ int main() {
 
       c->endRenderPass();
 
-      // Set a Barrier:
-      // From color attachment write
+      vk::RenderPassBeginInfo rpbegin2;
+      rpbegin2.renderPass = resolve_pass.get();
+      rpbegin2.renderArea = vk::Rect2D({0, 0}, {uint32_t(initial_width), uint32_t(initial_height)});
+      auto const main_fb2 =
+          get_framebuffer(initial_width, initial_height, rpbegin2.renderPass, resolve_views[current_image].get());
+      rpbegin2.framebuffer = main_fb2;
+      c->beginRenderPass(rpbegin2, vk::SubpassContents::eInline);
+      c->bindPipeline(vk::PipelineBindPoint::eGraphics, resolve_pipeline.get());
+      c->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, resolve_pll.get(), 0,
+          resolve_descriptor_sets[current_image].get(), nullptr);
+
+      c->pushConstants(resolve_pll.get(), vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eVertex, 0,
+          sizeof(matrices), &matrices);
+
+      c->setViewport(0, vk::Viewport(0, 0, initial_width, initial_height, 0, 1));
+      c->setScissor(0, vk::Rect2D({0, 0}, {uint32_t(initial_width), uint32_t(initial_height)}));
+      c->draw(3, 1, 0, 0);
+      c->endRenderPass();
+
+      // Set a Barrier
       // to blitting
       {
-        vk::ImageMemoryBarrier2KHR i0tr;
-        i0tr.image = attachment0img[current_image].image.get();
-
-        i0tr.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
-        i0tr.srcAccessMask = vk::AccessFlagBits2KHR::eColorAttachmentWrite;
-        i0tr.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        i0tr.srcStageMask = vk::PipelineStageFlagBits2KHR::eColorAttachmentOutput;
-
-        i0tr.newLayout = vk::ImageLayout::eTransferSrcOptimal;
-        i0tr.dstAccessMask = vk::AccessFlagBits2KHR::eTransferRead;
-        i0tr.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        i0tr.dstStageMask = vk::PipelineStageFlagBits2KHR::eTransfer;
-
-        i0tr.subresourceRange = vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1);
-
         vk::ImageMemoryBarrier2KHR istr;
-        istr.image = swapchain_images[current_image];
+        istr.image = swapchain_data.images[current_image];
         istr.oldLayout = vk::ImageLayout::ePresentSrcKHR;
         istr.srcAccessMask = vk::AccessFlagBits2KHR::eColorAttachmentRead;
         istr.srcQueueFamilyIndex = queues[present_queue_index].family;
@@ -885,7 +1629,7 @@ int main() {
 
         istr.subresourceRange = vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1);
 
-        std::array transitions{i0tr, istr};
+        std::array transitions{istr};
         vk::DependencyInfoKHR dep;
         dep.setImageMemoryBarriers(transitions);
         dep.dependencyFlags = vk::DependencyFlagBits::eByRegion;
@@ -898,13 +1642,15 @@ int main() {
       blit_region.dstSubresource = vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, 0, 0, 1);
       blit_region.setDstOffsets({vk::Offset3D(0, 0, 0), vk::Offset3D(initial_width, initial_height, 1)});
 
-      c->blitImage(attachment0img[current_image].image.get(), vk::ImageLayout::eTransferSrcOptimal,
-          swapchain_images[current_image], vk::ImageLayout::eTransferDstOptimal, blit_region, vk::Filter::eNearest);
+      c->blitImage(resolve_images[current_image].image.get(), vk::ImageLayout::eTransferSrcOptimal,
+          swapchain_data.images[current_image], vk::ImageLayout::eTransferDstOptimal, blit_region,
+          vk::Filter::eNearest);
 
       // now transition back to the default layouts
+      // BARRIER IS DONE BY IMGUI PASS
       {
-        vk::ImageMemoryBarrier2KHR i0tr;
-        i0tr.image = attachment0img[current_image].image.get();
+        /*vk::ImageMemoryBarrier2KHR i0tr;
+        i0tr.image = resolve_images[current_image].image.get();
 
         i0tr.oldLayout = vk::ImageLayout::eTransferSrcOptimal;
         i0tr.srcAccessMask = vk::AccessFlagBits2KHR::eTransferRead;
@@ -918,8 +1664,13 @@ int main() {
 
         i0tr.subresourceRange = vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1);
 
-        vk::ImageMemoryBarrier2KHR istr;
-        istr.image = swapchain_images[current_image];
+        std::array transitions{i0tr};
+        vk::DependencyInfoKHR dep;
+        dep.setImageMemoryBarriers(transitions);
+        dep.dependencyFlags = vk::DependencyFlagBits::eByRegion;
+        c->pipelineBarrier2KHR(dep, ext);*/
+       /* vk::ImageMemoryBarrier2KHR istr;
+        istr.image = swapchain_data.images[current_image];
         istr.oldLayout = vk::ImageLayout::eTransferDstOptimal;
         istr.srcAccessMask = vk::AccessFlagBits2KHR::eTransferWrite;
         istr.srcQueueFamilyIndex = queues[graphics_queue_index].family;
@@ -932,12 +1683,23 @@ int main() {
 
         istr.subresourceRange = vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1);
 
-        std::array transitions{i0tr, istr};
+
+        std::array transitions{istr};
         vk::DependencyInfoKHR dep;
         dep.setImageMemoryBarriers(transitions);
         dep.dependencyFlags = vk::DependencyFlagBits::eByRegion;
-        c->pipelineBarrier2KHR(dep, ext);
+        c->pipelineBarrier2KHR(dep, ext);*/
       }
+
+      vk::RenderPassBeginInfo imgui_rp;
+      imgui_rp.renderPass = imgui_renderpass.get();
+      imgui_rp.renderArea = vk::Rect2D({0, 0}, {uint32_t(initial_width), uint32_t(initial_height)});
+      imgui_rp.framebuffer = get_framebuffer(
+          initial_width, initial_height, imgui_rp.renderPass, swapchain_data.views[current_image].get());
+      c->beginRenderPass(imgui_rp, vk::SubpassContents::eInline);
+      ImGui::Render();
+      ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), c.get());
+      c->endRenderPass();
     }
     c->end();
 
@@ -955,12 +1717,20 @@ int main() {
     vk::PresentInfoKHR present;
     present.pImageIndices = &current_image;
     present.setWaitSemaphores(render_finished_sem.get());
-    present.setSwapchains(swapchain.get());
-    present_queue.presentKHR(present);
+    present.setSwapchains(swapchain_data.swapchain.get());
+    auto const present_result = present_queue.presentKHR(&present);
 
-    glfwSetWindowTitle(window.get(), std::to_string(1 / delta_time.count()).c_str());
+    if (present_result == vk::Result::eErrorOutOfDateKHR || present_result == vk::Result::eSuboptimalKHR) {
+      rebuild_swapchain = true;
+      continue;
+    } else if (present_result != vk::Result::eSuccess) {
+      throw std::runtime_error("failed to present swap chain image!");
+    }
+
     glfwPollEvents();
   }
 
   device->waitIdle();
+  ImGui_ImplGlfw_Shutdown();
+  ImGui_ImplVulkan_Shutdown();
 }

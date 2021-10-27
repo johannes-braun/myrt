@@ -7,6 +7,8 @@ find_library(SHADERC_COMBINED_LIB NAMES shaderc_combined PATHS ${VULKAN_DIR}/Lib
 find_library(SHADERC_LIB NAMES shadercd PATHS ${VULKAN_DIR}/Lib)
 
 find_package(glfw3 REQUIRED)
+find_package(imgui CONFIG REQUIRED)
+target_link_libraries(vk PRIVATE imgui::imgui)
 
 find_package(unofficial-vulkan-memory-allocator CONFIG REQUIRED)
 set(VULKAN_INC ${VULKAN_DIR}/Include)
