@@ -16,12 +16,14 @@ layout(push_constant) uniform constants {
 layout(location = 0) out vec3 out_position;
 layout(location = 1) out vec3 out_normal;
 layout(location = 2) out vec2 out_uv;
+layout(location = 3) flat out uint out_id;
 
 void main()
 {
   out_position = (in_transform * vec4(in_position, 1)).xyz;
-  out_normal = (transpose(inverse(in_transform)) * vec4(in_position, 1)).xyz;
+  out_normal = (transpose(inverse(in_transform)) * vec4(in_normal, 1)).xyz;
   out_uv = in_uv;
+  out_id = gl_InstanceIndex;
 
   gl_Position = in_constants.projection_matrix * in_constants.view_matrix * vec4(out_position, 1);
 }
