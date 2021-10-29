@@ -1,10 +1,10 @@
-add_executable(vk "vk.cpp" "shader_build.hpp" "shader_build.cpp" "../obj.hpp" "../obj.cpp")
+add_executable(vk "vk.cpp" "shader_build.hpp" "shader_build.cpp" "../obj.hpp" "../obj.cpp" "base.hpp" "base.cpp")
 target_compile_features(vk PUBLIC cxx_std_23)
 set(VULKAN_DIR $ENV{VULKAN_SDK})
 message(${VULKAN_DIR})
 find_library(VULKAN_LIB NAMES vulkan-1 PATHS ${VULKAN_DIR}/Lib)
-find_library(SHADERC_COMBINED_LIB NAMES shaderc_combinedd PATHS ${VULKAN_DIR}/Lib)
-find_library(SHADERC_LIB NAMES shadercd PATHS ${VULKAN_DIR}/Lib)
+find_library(SHADERC_COMBINED_LIB NAMES shaderc_combined PATHS ${VULKAN_DIR}/Lib)
+find_library(SHADERC_LIB NAMES shaderc PATHS ${VULKAN_DIR}/Lib)
 
 find_package(glfw3 REQUIRED)
 find_package(imgui CONFIG REQUIRED)

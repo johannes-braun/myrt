@@ -23,14 +23,12 @@ void write_normal(vec3 normal)
 
 void write_uv(vec2 uv)
 {
-  out_attachment0.w = uv.x;
-  out_attachment1.w = uv.y;
+  out_attachment0.w = uintBitsToFloat(packUnorm2x16(uv));
 }
 
 void write_identifier(uint identifier)
 {
-  out_attachment2.x = float(identifier & 0xFFF);
-  out_attachment2.y = float((identifier>>12) & 0xFFF);
+  out_attachment1.w = uintBitsToFloat(identifier);
 }
 
 void main()

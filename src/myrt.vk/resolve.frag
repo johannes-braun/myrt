@@ -1,11 +1,11 @@
 #version 460 core
 
-#extension GL_EXT_debug_printf : enable
 #extension GL_EXT_shader_realtime_clock : enable
 
 #include "../pt/random.glsl"
 #include "../pt/ggx.glsl"
 #include "../pt/transform.glsl"
+#include "../pt/sky.glsl"
 
 layout(location = 0) flat in vec3 cam_pos;
 
@@ -33,70 +33,37 @@ vec3 tonemap(vec3 col)
 }
 vec4 apply_fxaa(sampler2D tex, vec2 fragCoord, vec2 resolution); 
 
-vec3 background(vec3 dir)
+const float noising = 0.01;
+const float fog_min = 70;
+const float fog_max = 100;
+
+struct ssao_settings_t{
+  float max_distance;
+  float hemisphere_samples;
+  float distance_samples;
+} ;
+const ssao_settings_t ssao_settings = {
+  0.1,
+  2,
+  3
+};
+
+float ssao(sampler2DShadow depth_map, vec3 world_position, vec3 world_normal, mat4 view_projection)
 {
-  return mix(vec3(0.3, 0.4, 0.5), vec3(1.0, 0.98, 0.96), (dir.y + 1) / 2);
-}
-
-float rescale(float val, float smin, float smax, float dmin, float dmax)
-{
-  float new_scale = dmax - dmin;
-  float old_scale = smax - smin;
-
-  val -= smin;
-  val /= old_scale;
-  val *= new_scale;
-  val += dmin;
-  return val;
-}
-
-const float noising = 0.12;
-
-void main()
-{
-mat4 vmat = mat4(1,0,0,0,0,-1,0,0,0,0,1,0,0,0,0,1) * in_constants.view_matrix;
-
-  ivec2 pixel = ivec2(gl_FragCoord.xy);
-  ivec2 gbuffersize = ivec2(textureSize(in_attachment1, 0));
-  vec4 packed_position_uvx = texelFetch(in_attachment0, pixel, 0);
-  vec4 packed_normal_uvy = texelFetch(in_attachment1, pixel, 0);
-  vec4 attachment2 = texelFetch(in_attachment2, pixel, 0);
-
-  bool is_bg = packed_normal_uvy.xyz == vec3(0,0,0);
-  random_init_nt(pixel, int(411113 * clockRealtime2x32EXT().x));
-
-  mat4 mat_mul = in_constants.projection_matrix * in_constants.view_matrix;
-  if(is_bg)
-  {
-    vec4 ray_direction_hom = (inverse(mat_mul) * vec4((vec2(pixel) / vec2(gbuffersize)) * 2 - 1, 1, 1));
-    vec3 ray_direction = normalize(ray_direction_hom.xyz);
-    color.rgb = background(ray_direction);
-    color.rgb += noising * vec3(random_next(),random_next(),random_next());
-    color.a = 1;
-    return;
-  }
-
-  vec3 normal = normalize(packed_normal_uvy.xyz);
-  vec3 position = packed_position_uvx.xyz;
-  vec2 uv = vec2(packed_position_uvx.w, packed_normal_uvy.w);
-  
-
   float freeness = 0;
-  float ssao_distance = 0.1;
-  int hemisphere_samples = 2;
-  int distance_samples = 4;
+  float ssao_distance = ssao_settings.max_distance;
 
-  for(int i=0; i<distance_samples; ++i)
+  for(int i=0; i<ssao_settings.distance_samples; ++i)
   {
-    for(int y = 0; y < hemisphere_samples; ++y)
+    for(int y = 0; y < ssao_settings.hemisphere_samples; ++y)
     {
-      for(int x = 0; x < hemisphere_samples; ++x)
+      for(int x = 0; x < ssao_settings.hemisphere_samples; ++x)
       {
-        vec2 hs = vec2(x/float(hemisphere_samples-1), y/float(hemisphere_samples-1)) * 2 - 1;
+        vec2 hs = vec2(x/float(ssao_settings.hemisphere_samples-1), y/float(ssao_settings.hemisphere_samples-1));
         vec3 hemi = sample_hemisphere(hs);
-        vec3 world = normalize(transform_local_to_world(hemi, normal));
-        vec3 test_point = position + world * ssao_distance;
-        vec4 hom = mat_mul * vec4(test_point, 1);
+        vec3 world = normalize(transform_local_to_world(hemi, world_normal));
+        vec3 test_point = world_position + world * ssao_distance;
+        vec4 hom = view_projection * vec4(test_point, 1);
 
         if(hom.w == 0)
         {
@@ -108,27 +75,76 @@ mat4 vmat = mat4(1,0,0,0,0,-1,0,0,0,0,1,0,0,0,0,1) * in_constants.view_matrix;
 
         float dd = hom.z / hom.w;
 
-        freeness += texture(in_depth_attachment, vec3(px, dd));
+        freeness += texture(depth_map, vec3(px, dd));
       }
     }
-    ssao_distance /= 2;
+    ssao_distance = max(0.01, ssao_distance/2);
   }
-  freeness /= float(hemisphere_samples * hemisphere_samples) * distance_samples;
+  freeness /= float(ssao_settings.hemisphere_samples * ssao_settings.hemisphere_samples) * ssao_settings.distance_samples;
+  return freeness;
+}
+
+void main()
+{
+  mat4 vmat = mat4(1,0,0,0,0,-1,0,0,0,0,1,0,0,0,0,1) * in_constants.view_matrix;
+
+  ivec2 pixel = ivec2(gl_FragCoord.xy);
+  ivec2 gbuffersize = ivec2(textureSize(in_attachment1, 0));
+  vec4 packed_position_uv = texelFetch(in_attachment0, pixel, 0);
+  vec4 packed_normal_id = texelFetch(in_attachment1, pixel, 0);
+  vec4 attachment2 = texelFetch(in_attachment2, pixel, 0);
+
+  bool is_bg = packed_normal_id.xyz == vec3(0,0,0);
+  random_init_nt(pixel, int(411113 * clockRealtime2x32EXT().x));
+
+  mat4 mat_mul = in_constants.projection_matrix * in_constants.view_matrix;
+  mat4 mat_mul2 = in_constants.projection_matrix * mat4(mat3(in_constants.view_matrix));
+
+  float fac = 0.3;
+  float po = (clockRealtime2x32EXT().x / float(~0u));
+  float pe = mod((clockRealtime2x32EXT().y % 1000 + po) * fac, 1.0);
+
+  time = 1;//pe * 2 * 3.1415926535;
+
+  vec4 ray_direction_hom = (inverse(mat_mul2) * vec4((vec2(pixel) / vec2(gbuffersize)) * 2 - 1, 1, 1));
+  vec3 ray_direction = normalize(ray_direction_hom.xyz);
+  vec3 sundir;
+  color.rgb = sky_noclouds(ray_direction, cam_pos, sundir).xyz;
+  color.rgb += noising * vec3(random_next(),random_next(),random_next());
+  
+  if(is_bg)
+  {
+    color.a = 1;
+    return;
+  }
+
+  vec3 normal = normalize(packed_normal_id.xyz);
+  normal = faceforward(normal, ray_direction, normal);
+
+  vec3 position = packed_position_uv.xyz;
+  vec2 uv = unpackUnorm2x16(floatBitsToUint(packed_position_uv.w));
+
+  float freeness = ssao(in_depth_attachment, position, normal, mat_mul);
   freeness = 1 - (1-freeness) * random_next();
   
   vec3 diff = vec3(0.7, 0.8,0.4);
 
-  uint id = uint(attachment2.x) | (uint(attachment2.y)<<12);
+  uint id = floatBitsToUint(packed_normal_id.w);
 
   if(id % 2 == 0)
-  {
-    diff = vec3(0.67, 0, 0);
-  }
+    diff = vec3(0.15, 0, 0);
+  if(id % 5 == 0)
+    diff = vec3(0, 0.3, 0);
 
-  color = vec4(freeness * (diff * background(normal) + diff * max(0.0, dot(normal, normalize(vec3(1,1,1))))), 1);
-  color.rgb =  tonemap(color.rgb);
+  vec3 m = normalize(sundir + -ray_direction);
 
-  color.rgb += noising * vec3(random_next(),random_next(),random_next());
+  vec3 avg = sky_noclouds(reflect(ray_direction, normal), cam_pos, sundir);
+  vec4 objects = vec4(freeness * (diff * avg + diff * max(0.0, dot(normal, sundir)) + pow(max(0.0, dot(normal, m)), 200)), 1);
+  objects.rgb = tonemap(objects.rgb);
 
-  color.w = 1;
+  objects.rgb += noising * vec3(random_next(),random_next(),random_next());
+  objects.w = 1;
+  
+  float dist = distance(position, cam_pos);
+  color = mix(objects, color, smoothstep(fog_min, fog_max, dist));
 }
